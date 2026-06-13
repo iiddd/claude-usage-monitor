@@ -2,109 +2,73 @@
   "en": {
     "translation": {
       "Claude Code Usage": "Claude Code Usage",
-      "Refresh Interval": "Refresh Interval",
-      "Background Color": "Background Color",
-      "Background Transparency": "Background Transparency",
-      "Widget Personalization": "Claude Code Usage Personalization"
+      "Refresh Interval": "Refresh Interval"
     }
   },
   "de": {
     "translation": {
       "Claude Code Usage": "Claude Code Nutzung",
-      "Refresh Interval": "Aktualisierungsintervall",
-      "Background Color": "Hintergrundfarbe",
-      "Background Transparency": "Hintergrundtransparenz",
-      "Widget Personalization": "Claude Code Nutzung Personalisierung"
+      "Refresh Interval": "Aktualisierungsintervall"
     }
   },
   "es": {
     "translation": {
       "Claude Code Usage": "Uso de Claude Code",
-      "Refresh Interval": "Intervalo de actualización",
-      "Background Color": "Color de fondo",
-      "Background Transparency": "Transparencia del fondo",
-      "Widget Personalization": "Personalización de uso de Claude Code"
+      "Refresh Interval": "Intervalo de actualización"
     }
   },
   "fr": {
     "translation": {
       "Claude Code Usage": "Utilisation de Claude Code",
-      "Refresh Interval": "Intervalle de rafraîchissement",
-      "Background Color": "Couleur de fond",
-      "Background Transparency": "Transparence du fond",
-      "Widget Personalization": "Personnalisation utilisation Claude Code"
+      "Refresh Interval": "Intervalle de rafraîchissement"
     }
   },
   "it": {
     "translation": {
       "Claude Code Usage": "Utilizzo di Claude Code",
-      "Refresh Interval": "Intervallo di aggiornamento",
-      "Background Color": "Colore di sfondo",
-      "Background Transparency": "Trasparenza dello sfondo",
-      "Widget Personalization": "Personalizzazione utilizzo Claude Code"
+      "Refresh Interval": "Intervallo di aggiornamento"
     }
   },
   "ja": {
     "translation": {
       "Claude Code Usage": "Claude Code 使用状況",
-      "Refresh Interval": "更新間隔",
-      "Background Color": "背景色",
-      "Background Transparency": "背景の透明度",
-      "Widget Personalization": "Claude Code 使用状況のカスタマイズ"
+      "Refresh Interval": "更新間隔"
     }
   },
   "ko": {
     "translation": {
       "Claude Code Usage": "Claude Code 사용량",
-      "Refresh Interval": "새로 고침 간격",
-      "Background Color": "배경 색상",
-      "Background Transparency": "배경 투명도",
-      "Widget Personalization": "Claude Code 사용량 개인 설정"
+      "Refresh Interval": "새로 고침 간격"
     }
   },
   "pt": {
     "translation": {
       "Claude Code Usage": "Uso do Claude Code",
-      "Refresh Interval": "Intervalo de atualização",
-      "Background Color": "Cor do fundo",
-      "Background Transparency": "Transparência do fundo",
-      "Widget Personalization": "Personalização de uso do Claude Code"
+      "Refresh Interval": "Intervalo de atualização"
     }
   },
   "ru": {
     "translation": {
       "Claude Code Usage": "Использование Claude Code",
-      "Refresh Interval": "Интервал обновления",
-      "Background Color": "Цвет фона",
-      "Background Transparency": "Прозрачность фона",
-      "Widget Personalization": "Персонализация использования Claude Code"
+      "Refresh Interval": "Интервал обновления"
     }
   },
   "zh_CN": {
     "translation": {
       "Claude Code Usage": "Claude Code 用量",
-      "Refresh Interval": "刷新间隔",
-      "Background Color": "背景颜色",
-      "Background Transparency": "背景透明度",
-      "Widget Personalization": "Claude Code 用量个性化"
+      "Refresh Interval": "刷新间隔"
     }
   },
   "zh_TW": {
     "translation": {
       "Claude Code Usage": "Claude Code 用量",
-      "Refresh Interval": "更新間隔",
-      "Background Color": "背景顏色",
-      "Background Transparency": "背景透明度",
-      "Widget Personalization": "Claude Code 用量個人化"
+      "Refresh Interval": "更新間隔"
     }
   },
   "uk": {
     "translation": {
       "Claude Code Usage": "Використання Claude Code",
-      "Refresh Interval": "Інтервал оновлення",
-      "Background Color": "Колір фону",
-      "Background Transparency": "Прозорість фону",
-      "Widget Personalization": "Персоналізація використання Claude Code"
+      "Refresh Interval": "Інтервал оновлення"
     }
   },
   "en_FAKE": {

@@ -20,35 +20,11 @@
 			data-unit-label="'s'"
 		>
 
-		<!-- ── Personalization ────────────────────────────────────────── -->
-
-		<meta
-			name="x-icue-property"
-			content="backgroundColor"
-			data-label="tr('Background Color')"
-			data-type="color"
-			data-default="'#161616'"
-		>
-		<meta
-			name="x-icue-property"
-			content="transparency"
-			data-label="tr('Background Transparency')"
-			data-type="slider"
-			data-default="100"
-			data-min="0"
-			data-max="100"
-			data-step="1"
-		>
-
 		<script type="application/json" id="x-icue-groups">
 		[
 			{
 				"title": "tr('Claude Code Usage')",
 				"properties": ["refreshInterval"]
-			},
-			{
-				"title": "tr('Widget Personalization')",
-				"properties": ["backgroundColor", "transparency"]
 			}
 		]
 		</script>
@@ -114,7 +90,6 @@
 			"onICUEInitialized": onIcueInitialized
 		};
 
-		var root           = document.documentElement;
 		var pollTimer      = null;
 		var resetTimer     = null;
 		var activeInterval = 60;
@@ -142,26 +117,11 @@
 			onIcueInitialized();
 		}
 
-		// Fallback for local browser testing (no iCUE runtime).
-		window.addEventListener('DOMContentLoaded', function () {
-			if (typeof iCUE_initialized === 'undefined') {
-				ClaudeUsage.renderLoading();
-				startPolling();
-				startResetTimer();
-			}
-		});
-
 		// ── Config resolution ────────────────────────────────────────
 
 		function resolveConfig() {
 			var n = parseInt(typeof refreshInterval !== 'undefined' ? refreshInterval : 60, 10);
 			activeInterval = (Number.isFinite(n) && n > 0) ? n : 60;
-
-			var t = Number(typeof transparency !== 'undefined' ? transparency : 100);
-			root.style.setProperty('--bg-color',
-				typeof backgroundColor !== 'undefined' ? backgroundColor : '#161616');
-			root.style.setProperty('--widget-opacity',
-				Number.isFinite(t) ? t / 100 : 1);
 		}
 
 		// ── Polling ──────────────────────────────────────────────────
@@ -216,6 +176,129 @@
 					el7.textContent = ClaudeUsage.formatTimeUntil(lastResetsAt.sevenDay);
 			}, 30000);
 		}
+
+		// ── Preview mode (no iCUE runtime detected) ──────────────────
+		// Renders all four design states stacked for browser-based review.
+
+		window.addEventListener('DOMContentLoaded', function () {
+			if (typeof iCUE_initialized !== 'undefined') return;
+
+			var WIDGET_HTML = (
+				'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
+				'<link rel="stylesheet" href="styles/ClaudeUsage.css"></head><body>' +
+				'<div class="widget-background"></div>' +
+				'<div class="cu-widget">' +
+				'<div id="status-dot" class="status-dot"></div>' +
+				'<div class="usage-row">' +
+				'<div class="label-zone">' +
+				'<div class="window-name">5h window</div>' +
+				'<div class="reset-time" id="reset-5h">—</div>' +
+				'</div>' +
+				'<div class="bar-zone"><div class="block-bar" id="bar-5h"></div></div>' +
+				'<div class="pct-zone"><div class="pct-value" id="pct-5h">—%</div></div>' +
+				'</div>' +
+				'<div class="row-divider"></div>' +
+				'<div class="usage-row">' +
+				'<div class="label-zone">' +
+				'<div class="window-name">7d window</div>' +
+				'<div class="reset-time" id="reset-7d">—</div>' +
+				'</div>' +
+				'<div class="bar-zone"><div class="block-bar" id="bar-7d"></div></div>' +
+				'<div class="pct-zone"><div class="pct-value" id="pct-7d">—%</div></div>' +
+				'</div>' +
+				'<div class="loading-overlay" id="loading-overlay">' +
+				'<div class="loading-title">Loading usage data...</div>' +
+				'<div class="loading-subtitle">contacting localhost:41920</div>' +
+				'</div>' +
+				'<div class="error-overlay" id="error-overlay">' +
+				'<div class="error-title">Unable to fetch usage</div>' +
+				'<div class="error-reason" id="error-reason"></div>' +
+				'</div>' +
+				'</div>' +
+				'<script src="scripts\/claude-usage.js"><\/script>' +
+				'<script>' +
+				'window.addEventListener("message",function(e){' +
+				'var m=e.data||{};' +
+				'if(m.type==="render"){ClaudeUsage.renderData(m.data);ClaudeUsage.renderStale(!!m.stale);}' +
+				'if(m.type==="error")ClaudeUsage.renderError(m.message);' +
+				'if(m.type==="loading")ClaudeUsage.renderLoading();' +
+				'});' +
+				'<\/script>' +
+				'</body></html>'
+			);
+
+			var now = Date.now();
+			var STATES = [
+				{
+					label: 'Normal',
+					msg: {
+						type: 'render', stale: false,
+						data: {
+							five_hour: { utilization: 89.0, resets_at: new Date(now + 72 * 60000).toISOString() },
+							seven_day: { utilization: 18.0, resets_at: new Date(now + (4 * 24 * 60 + 7 * 60) * 60000).toISOString() }
+						}
+					}
+				},
+				{
+					label: 'Critical',
+					msg: {
+						type: 'render', stale: true,
+						data: {
+							five_hour: { utilization: 97.0, resets_at: new Date(now + 42000).toISOString() },
+							seven_day: { utilization: 74.0, resets_at: new Date(now + (2 * 24 * 60 + 11 * 60) * 60000).toISOString() }
+						}
+					}
+				},
+				{
+					label: 'Error',
+					msg: { type: 'error', message: 'credentials_not_found' }
+				},
+				{
+					label: 'Loading',
+					msg: { type: 'loading' }
+				}
+			];
+
+			document.body.innerHTML = '';
+			document.body.style.cssText = 'margin:0;background:#111;padding:24px 0 48px;font-family:sans-serif;';
+
+			var pairs = [];
+
+			STATES.forEach(function (state) {
+				var wrap = document.createElement('div');
+				wrap.style.marginBottom = '32px';
+
+				var lbl = document.createElement('div');
+				lbl.style.cssText = 'font-size:12px;color:#666;text-align:center;padding:0 0 8px;letter-spacing:.06em;text-transform:uppercase;';
+				lbl.textContent = state.label;
+
+				var scaler = document.createElement('div');
+				scaler.style.cssText = 'width:100%;max-width:840px;margin:0 auto;aspect-ratio:840/344;position:relative;overflow:hidden;';
+
+				var frame = document.createElement('iframe');
+				frame.title = state.label;
+				frame.style.cssText = 'position:absolute;top:0;left:0;width:840px;height:344px;border:0;transform-origin:top left;';
+				frame.srcdoc = WIDGET_HTML;
+
+				var msg = state.msg;
+				frame.addEventListener('load', function () {
+					frame.contentWindow.postMessage(msg, '*');
+					frame.style.transform = 'scale(' + (scaler.offsetWidth / 840) + ')';
+				});
+
+				pairs.push({ frame: frame, scaler: scaler });
+				scaler.appendChild(frame);
+				wrap.appendChild(lbl);
+				wrap.appendChild(scaler);
+				document.body.appendChild(wrap);
+			});
+
+			window.addEventListener('resize', function () {
+				pairs.forEach(function (p) {
+					p.frame.style.transform = 'scale(' + (p.scaler.offsetWidth / 840) + ')';
+				});
+			});
+		});
 		</script>
 	</body>
 </html>

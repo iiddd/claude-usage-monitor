@@ -1,5 +1,5 @@
 /* Shared rendering module for Claude Code Usage widget.
-   Used by both index.html (iCUE widget) and preview.html (browser preview).
+   Used by both index.html (iCUE widget) and preview iframes.
    Polling, lifecycle, and config are owned by each host — this module only
    reads/writes the DOM and formats values. */
 (function (global) {
@@ -26,6 +26,25 @@
         return totalMinutes + 'm';
     }
 
+    /* Returns a stable string key describing a block's visual state. */
+    function blockKey(i, threshold, color) {
+        var fi = Math.floor(threshold);
+        if (i < fi) return 'f:' + color;
+        if (i === fi && (threshold % 1) > 0.001)
+            return 'p:' + Math.round((threshold % 1) * 10000) + ':' + color;
+        return 'e';
+    }
+
+    /* Returns the CSS background value for a block state key. */
+    function blockBg(key) {
+        if (key === 'e') return '#2C2C2C';
+        if (key.charAt(0) === 'f') return key.slice(2);
+        var parts = key.split(':');
+        var frac  = parseInt(parts[1], 10) / 100;
+        var color = parts[2];
+        return 'linear-gradient(to right,' + color + ' ' + frac + '%,#2C2C2C ' + frac + '%)';
+    }
+
     function ensureBlocks(barEl) {
         if (!barEl || barEl.querySelector('.block')) return;
         for (var i = 0; i < 10; i++) {
@@ -35,36 +54,67 @@
         }
     }
 
+    /*
+     * Diff-based block updater.
+     * - If utilization is unchanged from last call, does nothing.
+     * - Otherwise, only transitions blocks whose visual state changed.
+     * - First render is instant (no animation).
+     * - Changed blocks: fade out (instant), swap background, fade in 400ms.
+     * - Single forced reflow per bar batches all block updates.
+     */
     function applyBlocks(barEl, utilization) {
-        var color     = getColor(utilization);
-        var threshold = utilization * 10;
+        ensureBlocks(barEl);
+
+        var prevRaw  = barEl.dataset.prevUtil;
+        var prevUtil = (prevRaw !== undefined && prevRaw !== '') ? parseFloat(prevRaw) : NaN;
+        var isFirst  = isNaN(prevUtil);
+
+        if (!isFirst && Math.abs(prevUtil - utilization) < 0.00001) return;
+        barEl.dataset.prevUtil = String(utilization);
+
+        var color      = getColor(utilization);
+        var threshold  = utilization * 10;
+        var prevColor  = isFirst ? null : getColor(prevUtil);
+        var prevThresh = isFirst ? NaN  : prevUtil * 10;
+        var isCrit     = utilization >= 0.9;
+
         var blocks    = barEl.querySelectorAll('.block');
+        var toAnimate = [];
 
         blocks.forEach(function (block, i) {
-            block.classList.remove('block-pulse');
+            var newKey   = blockKey(i, threshold, color);
+            var newPulse = isCrit && (i < Math.floor(threshold));
 
-            if (i < Math.floor(threshold)) {
-                block.style.background = color;
-                if (utilization >= 0.9) block.classList.add('block-pulse');
-            } else if (i === Math.floor(threshold) && threshold % 1 > 0.001) {
-                var frac = (threshold % 1) * 100;
-                block.style.background =
-                    'linear-gradient(to right, ' + color + ' ' + frac + '%, #2C2C2C ' + frac + '%)';
-            } else {
-                block.style.background = '#2C2C2C';
+            if (isFirst) {
+                block.style.background = blockBg(newKey);
+                block.classList.toggle('block-pulse', newPulse);
+                return;
             }
-        });
-    }
 
-    function flashBar(barEl) {
-        if (!barEl) return;
-        barEl.style.transition = 'none';
-        barEl.style.opacity    = '0';
-        requestAnimationFrame(function () {
-            requestAnimationFrame(function () {
-                barEl.style.transition = 'opacity 0.2s ease-in';
-                barEl.style.opacity    = '1';
-            });
+            var oldKey   = blockKey(i, prevThresh, prevColor);
+            var wasPulse = (prevUtil >= 0.9) && (i < Math.floor(prevThresh));
+
+            if (newKey === oldKey && newPulse === wasPulse) return;
+
+            block.classList.remove('block-pulse');
+            block.style.transition = 'none';
+            block.style.opacity    = '0';
+            block.style.background = blockBg(newKey);
+            block._newPulse = newPulse;
+            toAnimate.push(block);
+        });
+
+        if (toAnimate.length === 0) return;
+
+        /* Single reflow so all blocks register opacity:0 before transition starts. */
+        void barEl.offsetWidth;
+
+        toAnimate.forEach(function (b) {
+            b.style.transition = 'opacity 400ms ease-in-out';
+            b.style.opacity    = '1';
+            var np = b._newPulse;
+            delete b._newPulse;
+            if (np) setTimeout(function () { b.classList.add('block-pulse'); }, 400);
         });
     }
 
@@ -74,15 +124,12 @@
         var resetEl = document.getElementById(resetId);
         if (!barEl || !pctEl || !resetEl) return;
 
-        ensureBlocks(barEl);
-        flashBar(barEl);
         applyBlocks(barEl, utilization);
 
+        /* Text: instant update, no animation. */
         var color = getColor(utilization);
         pctEl.textContent = Math.round(utilization * 100) + '%';
         pctEl.style.color = color;
-        pctEl.classList.toggle('pct-pulse', utilization >= 0.9);
-
         resetEl.textContent = formatTimeUntil(resetsAt);
     }
 
@@ -135,11 +182,11 @@
     }
 
     global.ClaudeUsage = {
-        renderData: renderData,
-        renderError: renderError,
-        renderLoading: renderLoading,
-        renderStale: renderStale,
+        renderData:        renderData,
+        renderError:       renderError,
+        renderLoading:     renderLoading,
+        renderStale:       renderStale,
         renderPlaceholder: renderPlaceholder,
-        formatTimeUntil: formatTimeUntil
+        formatTimeUntil:   formatTimeUntil
     };
 })(window);
