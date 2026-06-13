@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>tr('Claude Code Usage')</title>
+		<link rel="icon" type="image/svg+xml" href="resources/claude-usage.svg">
+
+		<!-- ── Widget config ──────────────────────────────────────────── -->
+
+		<meta
+			name="x-icue-property"
+			content="refreshInterval"
+			data-label="tr('Refresh Interval')"
+			data-type="slider"
+			data-default="60"
+			data-min="10"
+			data-max="300"
+			data-step="10"
+			data-unit-label="'s'"
+		>
+
+		<!-- ── Personalization ────────────────────────────────────────── -->
+
+		<meta
+			name="x-icue-property"
+			content="backgroundColor"
+			data-label="tr('Background Color')"
+			data-type="color"
+			data-default="'#161616'"
+		>
+		<meta
+			name="x-icue-property"
+			content="transparency"
+			data-label="tr('Background Transparency')"
+			data-type="slider"
+			data-default="100"
+			data-min="0"
+			data-max="100"
+			data-step="1"
+		>
+
+		<script type="application/json" id="x-icue-groups">
+		[
+			{
+				"title": "tr('Claude Code Usage')",
+				"properties": ["refreshInterval"]
+			},
+			{
+				"title": "tr('Widget Personalization')",
+				"properties": ["backgroundColor", "transparency"]
+			}
+		]
+		</script>
+
+		<link rel="stylesheet" type="text/css" href="styles/ClaudeUsage.css">
+	</head>
+	<body>
+		<div class="widget-background"></div>
+
+		<div class="cu-widget">
+
+			<!-- ── Stale cache indicator ──────────────────────────────── -->
+			<div id="status-dot" class="status-dot"></div>
+
+			<!-- ── 5h row ─────────────────────────────────────────────── -->
+			<div class="usage-row">
+				<div class="label-zone">
+					<div class="window-name">5h window</div>
+					<div class="reset-time" id="reset-5h">—</div>
+				</div>
+				<div class="bar-zone">
+					<div class="block-bar" id="bar-5h"></div>
+				</div>
+				<div class="pct-zone">
+					<div class="pct-value" id="pct-5h">—%</div>
+				</div>
+			</div>
+
+			<div class="row-divider"></div>
+
+			<!-- ── 7d row ─────────────────────────────────────────────── -->
+			<div class="usage-row">
+				<div class="label-zone">
+					<div class="window-name">7d window</div>
+					<div class="reset-time" id="reset-7d">—</div>
+				</div>
+				<div class="bar-zone">
+					<div class="block-bar" id="bar-7d"></div>
+				</div>
+				<div class="pct-zone">
+					<div class="pct-value" id="pct-7d">—%</div>
+				</div>
+			</div>
+
+			<!-- ── Loading overlay ────────────────────────────────────── -->
+			<div class="loading-overlay" id="loading-overlay">
+				<div class="loading-title">Loading usage data...</div>
+				<div class="loading-subtitle">contacting localhost:41920</div>
+			</div>
+
+			<!-- ── Error overlay ──────────────────────────────────────── -->
+			<div class="error-overlay" id="error-overlay">
+				<div class="error-title">Unable to fetch usage</div>
+				<div class="error-reason" id="error-reason"></div>
+			</div>
+
+		</div>
+
+		<script src="scripts/claude-usage.js"></script>
+		<script>
+		icueEvents = {
+			"onDataUpdated":     onIcueDataUpdated,
+			"onICUEInitialized": onIcueInitialized
+		};
+
+		var root           = document.documentElement;
+		var pollTimer      = null;
+		var resetTimer     = null;
+		var activeInterval = 60;
+		var lastResetsAt   = { fiveHour: null, sevenDay: null };
+
+		// ── iCUE lifecycle ───────────────────────────────────────────
+
+		function onIcueInitialized() {
+			resolveConfig();
+			ClaudeUsage.renderLoading();
+			startPolling();
+			startResetTimer();
+		}
+
+		function onIcueDataUpdated() {
+			var prevInterval = activeInterval;
+			resolveConfig();
+			if (prevInterval !== activeInterval) {
+				restartPolling();
+			}
+		}
+
+		// Guard: iCUE may already be initialized before this script runs.
+		if (typeof iCUE_initialized !== 'undefined' && iCUE_initialized) {
+			onIcueInitialized();
+		}
+
+		// Fallback for local browser testing (no iCUE runtime).
+		window.addEventListener('DOMContentLoaded', function () {
+			if (typeof iCUE_initialized === 'undefined') {
+				ClaudeUsage.renderLoading();
+				startPolling();
+				startResetTimer();
+			}
+		});
+
+		// ── Config resolution ────────────────────────────────────────
+
+		function resolveConfig() {
+			var n = parseInt(typeof refreshInterval !== 'undefined' ? refreshInterval : 60, 10);
+			activeInterval = (Number.isFinite(n) && n > 0) ? n : 60;
+
+			var t = Number(typeof transparency !== 'undefined' ? transparency : 100);
+			root.style.setProperty('--bg-color',
+				typeof backgroundColor !== 'undefined' ? backgroundColor : '#161616');
+			root.style.setProperty('--widget-opacity',
+				Number.isFinite(t) ? t / 100 : 1);
+		}
+
+		// ── Polling ──────────────────────────────────────────────────
+
+		function startPolling() {
+			fetchUsage();
+			pollTimer = setInterval(fetchUsage, activeInterval * 1000);
+		}
+
+		function restartPolling() {
+			clearInterval(pollTimer);
+			startPolling();
+		}
+
+		function fetchUsage() {
+			var isStaleResponse = false;
+
+			fetch('http://localhost:41920/usage')
+			.then(function (r) {
+				isStaleResponse = r.headers.get('X-Cache-Stale') === 'true';
+				if (!r.ok) {
+					return r.json().then(function (body) {
+						throw new Error(body.error || ('HTTP ' + r.status));
+					}).catch(function () {
+						throw new Error('HTTP ' + r.status);
+					});
+				}
+				return r.json();
+			})
+			.then(function (data) {
+				lastResetsAt.fiveHour = data.five_hour.resets_at;
+				lastResetsAt.sevenDay = data.seven_day.resets_at;
+				ClaudeUsage.renderStale(isStaleResponse);
+				ClaudeUsage.renderData(data);
+			})
+			.catch(function (err) {
+				ClaudeUsage.renderStale(false);
+				ClaudeUsage.renderError(err.message || 'Request failed');
+			});
+		}
+
+		// ── Reset-time countdown (refreshes every 30 s without re-fetching) ──
+
+		function startResetTimer() {
+			if (resetTimer) clearInterval(resetTimer);
+			resetTimer = setInterval(function () {
+				var el5 = document.getElementById('reset-5h');
+				var el7 = document.getElementById('reset-7d');
+				if (el5 && lastResetsAt.fiveHour)
+					el5.textContent = ClaudeUsage.formatTimeUntil(lastResetsAt.fiveHour);
+				if (el7 && lastResetsAt.sevenDay)
+					el7.textContent = ClaudeUsage.formatTimeUntil(lastResetsAt.sevenDay);
+			}, 30000);
+		}
+		</script>
+	</body>
+</html>

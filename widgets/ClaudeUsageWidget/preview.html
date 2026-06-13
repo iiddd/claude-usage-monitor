@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Claude Code Usage — Widget Preview</title>
+		<style>
+			body {
+				margin: 0;
+				background: #111;
+				color: #e6e6e6;
+				font-family: sans-serif;
+				padding: 24px 0 48px;
+			}
+
+			.state-label {
+				font-size: 12px;
+				color: #666;
+				text-align: center;
+				padding: 0 0 8px;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+
+			.state-wrap {
+				margin-bottom: 32px;
+			}
+
+			/* Scale each 840×344 frame to viewport width */
+			.frame-scaler {
+				width: 100%;
+				max-width: 840px;
+				margin: 0 auto;
+				aspect-ratio: 840 / 344;
+				position: relative;
+				overflow: hidden;
+			}
+
+			iframe {
+				position: absolute;
+				top: 0;
+				left: 0;
+				width: 840px;
+				height: 344px;
+				border: 0;
+				transform-origin: top left;
+				background: #000;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="states"></div>
+
+		<script>
+		/* Each frame hosts the full widget DOM isolated via srcdoc.
+		   After load, a postMessage drives it into the desired state. */
+
+		var WIDGET_SRCDOC = '<!DOCTYPE html>\n' +
+		'<html lang="en">\n' +
+		'<head>\n' +
+		'<meta charset="UTF-8">\n' +
+		'<link rel="stylesheet" type="text/css" href="styles/ClaudeUsage.css">\n' +
+		'</head>\n' +
+		'<body>\n' +
+		'<div class="widget-background"></div>\n' +
+		'<div class="cu-widget">\n' +
+		'  <div id="status-dot" class="status-dot"></div>\n' +
+		'  <div class="usage-row">\n' +
+		'    <div class="label-zone">\n' +
+		'      <div class="window-name">5h window</div>\n' +
+		'      <div class="reset-time" id="reset-5h">—</div>\n' +
+		'    </div>\n' +
+		'    <div class="bar-zone"><div class="block-bar" id="bar-5h"></div></div>\n' +
+		'    <div class="pct-zone"><div class="pct-value" id="pct-5h">—%</div></div>\n' +
+		'  </div>\n' +
+		'  <div class="row-divider"></div>\n' +
+		'  <div class="usage-row">\n' +
+		'    <div class="label-zone">\n' +
+		'      <div class="window-name">7d window</div>\n' +
+		'      <div class="reset-time" id="reset-7d">—</div>\n' +
+		'    </div>\n' +
+		'    <div class="bar-zone"><div class="block-bar" id="bar-7d"></div></div>\n' +
+		'    <div class="pct-zone"><div class="pct-value" id="pct-7d">—%</div></div>\n' +
+		'  </div>\n' +
+		'  <div class="loading-overlay" id="loading-overlay">\n' +
+		'    <div class="loading-title">Loading usage data...</div>\n' +
+		'    <div class="loading-subtitle">contacting localhost:41920</div>\n' +
+		'  </div>\n' +
+		'  <div class="error-overlay" id="error-overlay">\n' +
+		'    <div class="error-title">Unable to fetch usage</div>\n' +
+		'    <div class="error-reason" id="error-reason"></div>\n' +
+		'  </div>\n' +
+		'</div>\n' +
+		'<script src="scripts/claude-usage.js"><\/script>\n' +
+		'<script>\n' +
+		'  window.addEventListener("message", function (e) {\n' +
+		'    var msg = e.data || {};\n' +
+		'    if (msg.type === "render") {\n' +
+		'      ClaudeUsage.renderData(msg.data);\n' +
+		'      ClaudeUsage.renderStale(!!msg.stale);\n' +
+		'    }\n' +
+		'    if (msg.type === "error")   ClaudeUsage.renderError(msg.message);\n' +
+		'    if (msg.type === "loading") ClaudeUsage.renderLoading();\n' +
+		'  });\n' +
+		'<\/script>\n' +
+		'</body>\n' +
+		'</html>';
+
+		var now = Date.now();
+
+		var STATES = [
+			{
+				label: 'Normal — 5h: 89%  ·  7d: 18%',
+				msg: {
+					type: 'render',
+					stale: false,
+					data: {
+						five_hour: { utilization: 89.0, resets_at: new Date(now + 72 * 60000).toISOString() },
+						seven_day: { utilization: 18.0, resets_at: new Date(now + (4 * 24 * 60 + 7 * 60) * 60000).toISOString() }
+					}
+				}
+			},
+			{
+				label: 'Critical — 5h: 97% (pulse)  ·  7d: 75%',
+				msg: {
+					type: 'render',
+					stale: true,
+					data: {
+						five_hour: { utilization: 97.0, resets_at: new Date(now + 42 * 60000).toISOString() },
+						seven_day: { utilization: 75.0, resets_at: new Date(now + (2 * 24 * 60 + 3 * 60) * 60000).toISOString() }
+					}
+				}
+			},
+			{
+				label: 'Error state',
+				msg: { type: 'error', message: 'credentials_not_found' }
+			},
+			{
+				label: 'Loading state',
+				msg: { type: 'loading' }
+			}
+		];
+
+		var container = document.getElementById('states');
+
+		STATES.forEach(function (state) {
+			var wrap = document.createElement('div');
+			wrap.className = 'state-wrap';
+
+			var label = document.createElement('div');
+			label.className = 'state-label';
+			label.textContent = state.label;
+
+			var scaler = document.createElement('div');
+			scaler.className = 'frame-scaler';
+
+			var iframe = document.createElement('iframe');
+			iframe.title = state.label;
+			iframe.srcdoc = WIDGET_SRCDOC;
+
+			var msg = state.msg;
+			iframe.addEventListener('load', function () {
+				iframe.contentWindow.postMessage(msg, '*');
+				scaleFrame(iframe, scaler);
+			});
+
+			scaler.appendChild(iframe);
+			wrap.appendChild(label);
+			wrap.appendChild(scaler);
+			container.appendChild(wrap);
+		});
+
+		/* Scale iframes to fit their container on load and resize. */
+		function scaleFrame(iframe, scaler) {
+			var containerWidth = scaler.offsetWidth;
+			var scale = containerWidth / 840;
+			iframe.style.transform = 'scale(' + scale + ')';
+		}
+
+		window.addEventListener('resize', function () {
+			var scalers = document.querySelectorAll('.frame-scaler');
+			scalers.forEach(function (scaler) {
+				var iframe = scaler.querySelector('iframe');
+				if (iframe) scaleFrame(iframe, scaler);
+			});
+		});
+		</script>
+	</body>
+</html>

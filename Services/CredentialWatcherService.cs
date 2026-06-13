@@ -1,0 +1,230 @@
+using System.Diagnostics;
+using System.Text.Json;
+using System.Threading.Channels;
+using ClaudeUsageServer.Models;
+using Microsoft.Extensions.Options;
+
+namespace ClaudeUsageServer.Services;
+
+internal sealed class CredentialWatcherService : BackgroundService
+{
+    private readonly CredentialStore _store;
+    private readonly IOptionsMonitor<ServerOptions> _options;
+    private readonly ILogger<CredentialWatcherService> _logger;
+    private FileSystemWatcher? _watcher;
+
+    // Capacity-1 channel: multiple rapid FSW events collapse into one reload signal.
+    private readonly Channel<bool> _reloadSignal = Channel.CreateBounded<bool>(
+        new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest });
+
+    public CredentialWatcherService(
+        CredentialStore store,
+        IOptionsMonitor<ServerOptions> options,
+        ILogger<CredentialWatcherService> logger)
+    {
+        _store = store;
+        _options = options;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("ClaudeUsageServer starting");
+
+        await TryLoadCredentialsAsync();
+        SetupFileWatcher();
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var timeUntilRefresh = _store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes);
+
+            if (timeUntilRefresh > TimeSpan.Zero)
+            {
+                // Wait until the refresh window opens, but yield early if FSW fires.
+                try
+                {
+                    using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    waitCts.CancelAfter(timeUntilRefresh);
+                    await _reloadSignal.Reader.ReadAsync(waitCts.Token);
+                    // FSW fired: credentials already reloaded inside the handler — restart loop.
+                    continue;
+                }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                {
+                    // Timeout reached: fall through to refresh.
+                }
+            }
+
+            if (!stoppingToken.IsCancellationRequested)
+                await TryRefreshWithRetryAsync(stoppingToken);
+        }
+
+        _logger.LogInformation("ClaudeUsageServer stopping");
+    }
+
+    public override void Dispose()
+    {
+        _watcher?.Dispose();
+        base.Dispose();
+    }
+
+    // ── Credential loading ─────────────────────────────────────────────────
+
+    private async Task TryLoadCredentialsAsync()
+    {
+        var path = _options.CurrentValue.ResolvedCredentialsPath;
+        try
+        {
+            string json = await ReadWithRetryAsync(path);
+
+            var file = JsonSerializer.Deserialize<CredentialsFile>(json);
+            var oauth = file?.ClaudeAiOauth;
+
+            if (string.IsNullOrWhiteSpace(oauth?.AccessToken))
+            {
+                _logger.LogWarning("Credentials file does not contain a valid access token");
+                _store.MarkFileInvalid();
+                return;
+            }
+
+            var expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(oauth.ExpiresAt);
+            _store.Update(oauth.AccessToken, expiresAt);
+            _logger.LogInformation("Credentials loaded, token expires at {ExpiresAt:O}", expiresAt);
+        }
+        catch (FileNotFoundException)
+        {
+            _logger.LogWarning("Credentials file not found");
+            _store.MarkFileNotFound();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            _logger.LogWarning("Credentials directory not found");
+            _store.MarkFileNotFound();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error reading credentials file");
+            _store.MarkFileInvalid();
+        }
+    }
+
+    // Retries up to 3 times with a short delay to handle write-lock races.
+    private static async Task<string> ReadWithRetryAsync(string path)
+    {
+        IOException? last = null;
+        for (int i = 0; i < 3; i++)
+        {
+            try { return await File.ReadAllTextAsync(path); }
+            catch (IOException ex) when (i < 2)
+            {
+                last = ex;
+                await Task.Delay(200);
+            }
+        }
+        throw last!;
+    }
+
+    // ── Token refresh ──────────────────────────────────────────────────────
+
+    private async Task TryRefreshWithRetryAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            if (_store.HasValidToken) return;
+
+            bool cliOk = await TryRunClaudeCliAsync(stoppingToken);
+            if (cliOk)
+            {
+                await TryLoadCredentialsAsync();
+                if (_store.HasValidToken)
+                {
+                    _logger.LogInformation("Token refresh succeeded");
+                    return;
+                }
+            }
+
+            _logger.LogWarning(
+                "Token refresh did not produce a valid credential, retrying in {Seconds}s",
+                _options.CurrentValue.RetryIntervalSeconds);
+
+            // Wait the retry interval; FSW can interrupt if it delivers a fresh token.
+            try
+            {
+                using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                retryCts.CancelAfter(TimeSpan.FromSeconds(_options.CurrentValue.RetryIntervalSeconds));
+                await _reloadSignal.Reader.ReadAsync(retryCts.Token);
+                if (_store.HasValidToken) return;
+            }
+            catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+            {
+                // Retry interval elapsed.
+            }
+        }
+    }
+
+    private async Task<bool> TryRunClaudeCliAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            _logger.LogInformation("Invoking claude CLI to trigger credential refresh");
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "claude",
+                Arguments = "--version",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+
+            using var process = new Process { StartInfo = psi };
+            process.Start();
+            await process.WaitForExitAsync(stoppingToken);
+            return process.ExitCode == 0;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogError("claude CLI invocation failed: {Reason}", ex.Message);
+            return false;
+        }
+    }
+
+    // ── FileSystemWatcher ──────────────────────────────────────────────────
+
+    private void SetupFileWatcher()
+    {
+        var path = _options.CurrentValue.ResolvedCredentialsPath;
+        var dir = Path.GetDirectoryName(path);
+        var file = Path.GetFileName(path);
+
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        {
+            _logger.LogWarning("Credentials directory does not exist; file change watching is disabled");
+            return;
+        }
+
+        _watcher = new FileSystemWatcher(dir, file)
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+            EnableRaisingEvents = true,
+        };
+        _watcher.Changed += OnCredentialsChanged;
+        _watcher.Created += OnCredentialsChanged;
+        _watcher.Renamed += OnCredentialsChanged;
+
+        _logger.LogInformation("Watching credentials file for external changes");
+    }
+
+    private void OnCredentialsChanged(object sender, FileSystemEventArgs e)
+    {
+        _ = Task.Run(async () =>
+        {
+            // Debounce: the file may still be mid-write.
+            await Task.Delay(500);
+            await TryLoadCredentialsAsync();
+            _reloadSignal.Writer.TryWrite(true);
+        });
+    }
+}
