@@ -257,7 +257,7 @@ The `ClaudeUsageServer.Installer` project produces a self-contained MSI that ins
 5. Runs a custom action (PowerShell) that writes the installing user's `%USERPROFILE%` and `%APPDATA%` paths into `appsettings.json` so the LocalSystem service can find the credentials file and Claude CLI.
 6. Starts the service.
 
-**Service account:** LocalSystem. Running as the interactive user requires knowing their Windows password at install time, which is unavailable for Microsoft accounts and domain accounts. LocalSystem is used instead; the custom action in step 5 bridges the gap by writing explicit user-specific paths into `appsettings.json`.
+**Service account:** LocalSystem. Running as the interactive user requires knowing their Windows password at install time, which is unavailable for Microsoft accounts and domain accounts. LocalSystem is used instead. To bridge the gap, step 5 writes the installing user's paths into the service's environment registry entry (`HKLM\...\Services\ClaudeUsageServer\Environment`). The Windows SCM injects these as environment variables into the service process at every startup, and the .NET configuration system picks them up as overrides for `CredentialsPath` and `ClaudeCliPath`. `appsettings.json` is not modified.
 
 ### Build the MSI
 
@@ -337,20 +337,28 @@ Or set a system environment variable before restarting the service:
 
 **Service won't start after install**
 
-Check `%ProgramData%\ClaudeUsageServer\logs\` for Serilog log files. The most common cause is the custom action (step 5 above) failing to write the correct paths into `appsettings.json`.
+Check `%ProgramData%\ClaudeUsageServer\logs\` for Serilog log files. The most common cause is the installer failing to write the user paths into the service's environment registry entry.
 
-To fix manually, edit `%ProgramFiles%\ClaudeUsageServer\appsettings.json`:
+Verify the entry exists:
 
-```json
-{
-  "ClaudeUsageServer": {
-    "CredentialsPath": "C:\\Users\\YourName\\.claude\\.credentials.json",
-    "ClaudeCliPath":   "C:\\Users\\YourName\\AppData\\Roaming\\npm\\claude.cmd"
-  }
-}
+```powershell
+Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer" -Name Environment
+# Expected output:
+# ClaudeUsageServer__CredentialsPath=C:\Users\YourName\.claude\.credentials.json
+# ClaudeUsageServer__ClaudeCliPath=C:\Users\YourName\AppData\Roaming\npm\claude.cmd
 ```
 
-Then restart the service: `sc.exe start ClaudeUsageServer`
+To fix manually (run as Administrator):
+
+```powershell
+$svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer"
+Set-ItemProperty $svcKey -Name Environment -Type MultiString -Value @(
+    "ClaudeUsageServer__CredentialsPath=$env:USERPROFILE\.claude\.credentials.json",
+    "ClaudeUsageServer__ClaudeCliPath=$env:APPDATA\npm\claude.cmd"
+)
+sc.exe stop ClaudeUsageServer
+sc.exe start ClaudeUsageServer
+```
 
 **Port 41920 already in use**
 

@@ -10,13 +10,9 @@
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\publish\</PublishDir>
     <!-- Expose PublishDir to the WiX preprocessor as $(var.PublishDir). -->
     <DefineConstants>PublishDir=$(PublishDir)</DefineConstants>
-    <!-- ICE03 flags CustomAction.Target values > 255 chars from the old MSI schema.
-         Modern Windows Installer (Win7+) handles longer Formatted strings at runtime. -->
-    <SuppressIces>ICE03</SuppressIces>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="WixToolset.UI.wixext" Version="4.0.5" />
-    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.5" />
   </ItemGroup>
 </Project>
