@@ -295,9 +295,19 @@ curl http://127.0.0.1:41920/status   # → {"tokenValid":true,...}
 
 **Settings → Apps → Installed apps → Claude Usage Server → Uninstall**, or via Add/Remove Programs.
 
-The uninstaller stops the service, removes the registration, and removes all files from `%ProgramFiles%\ClaudeUsageServer\`. It also removes the `%ProgramData%\ClaudeUsageServer\logs\` directory created during install.
+The uninstaller performs these actions in order:
 
-Log files already written are **not** removed; delete `%ProgramData%\ClaudeUsageServer\` manually after uninstall if you want a clean slate:
+| Action | Detail |
+|--------|--------|
+| Stop service | Waits for the service process to exit before proceeding |
+| Delete service | Removes the `ClaudeUsageServer` Windows Service registration from the SCM |
+| Remove files | Deletes all files under `%ProgramFiles%\ClaudeUsageServer\` |
+| Remove install directory | Removes `%ProgramFiles%\ClaudeUsageServer\` itself (empty after file removal) |
+| Remove Event Log source | Deletes the `HKLM\...\EventLog\Application\ClaudeUsageServer` registry key and all its values |
+
+**Deliberately kept after uninstall:**
+
+`%ProgramData%\ClaudeUsageServer\logs\` and all log files inside it are **not** removed. This preserves diagnostic history across accidental uninstall/reinstall cycles. To do a full wipe:
 
 ```powershell
 Remove-Item -Recurse -Force "$env:ProgramData\ClaudeUsageServer"

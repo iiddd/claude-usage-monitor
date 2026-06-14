@@ -18,6 +18,16 @@
     Upgrade policy  : Major upgrade (stable UpgradeCode, new ProductCode per version).
       appsettings.json is overwritten on upgrade — use env-var overrides
       (ClaudeUsageServer__CredentialsPath, etc.) if you need to preserve settings.
+
+    Uninstall behaviour (deliberate choices):
+      REMOVED  : All files under %ProgramFiles%\ClaudeUsageServer\
+      REMOVED  : The %ProgramFiles%\ClaudeUsageServer\ directory itself (via RemoveFolder)
+      REMOVED  : Windows Service registration (ServiceControl Remove="uninstall")
+      REMOVED  : Event Log source registry key (RemoveRegistryKey on EventLogSourceComponent)
+      KEPT     : %ProgramData%\ClaudeUsageServer\logs\ and its log files
+                 Rationale: preserve diagnostic history across accidental uninstall/reinstall.
+                 Delete manually if a full wipe is needed:
+                   Remove-Item -Recurse -Force "$env:ProgramData\ClaudeUsageServer"
   -->
 
   <Package Name="Claude Usage Server"
@@ -70,6 +80,13 @@
                       Stop="both"
                       Remove="uninstall"
                       Wait="yes" />
+      <!--
+        RemoveFolder schedules INSTALLFOLDER for deletion on uninstall via the RemoveFolders
+        standard action. MSI only deletes the directory if it is empty at that point — all
+        File components above are removed first, so the directory will be empty. Without this
+        element the directory is left behind even after all files inside it are gone.
+      -->
+      <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
     </Component>
 
     <!-- appsettings.json: separate component so the CA_WriteUserPaths action can update it. -->
@@ -144,6 +161,12 @@
       without needing a custom message DLL. EventCreate.exe is a standard Windows
       tool; using it as the EventMessageFile is a well-known workaround that lets
       the service write plain-text entries without shipping a resource DLL.
+
+      RemoveRegistryKey ensures the entire HKLM key is deleted on uninstall, not
+      just the EventMessageFile value. The Windows Event Log subsystem may have added
+      extra values (TypesSupported, CategoryCount) to the same key at runtime; without
+      RemoveRegistryKey, those system-written values prevent the key from being removed
+      by the standard RemoveRegistryValues action, leaving a stale key in the registry.
     -->
     <Component Id="EventLogSourceComponent" Directory="INSTALLFOLDER" Guid="*">
       <RegistryValue Id="EventLogSourceKey"
@@ -153,6 +176,10 @@
                      Value="%SystemRoot%\System32\EventCreate.exe"
                      Type="expandable"
                      KeyPath="yes" />
+      <RemoveRegistryKey Id="RemoveEventLogKey"
+                         Root="HKLM"
+                         Key="SYSTEM\CurrentControlSet\Services\EventLog\Application\ClaudeUsageServer"
+                         Action="removeOnUninstall" />
     </Component>
 
     <!-- ── Features ────────────────────────────────────────────────────────── -->
