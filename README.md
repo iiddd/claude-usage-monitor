@@ -284,7 +284,7 @@ The MSI is produced at `ClaudeUsageServer.Installer\bin\x64\Release\ClaudeUsageS
 
 Double-click `ClaudeUsageServer.msi`. Accept the UAC elevation prompt. The installer copies files, registers the service, and starts it. No further configuration is needed for a standard single-user Windows 10/11 machine.
 
-After install, verify the service is running:
+After installation, verify the service is running:
 
 ```powershell
 curl http://127.0.0.1:41920/health   # → ok
