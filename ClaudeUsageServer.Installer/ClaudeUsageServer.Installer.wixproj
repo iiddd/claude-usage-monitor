@@ -1,0 +1,22 @@
+<Project Sdk="WixToolset.Sdk/4.0.5">
+  <PropertyGroup>
+    <OutputName>ClaudeUsageServer</OutputName>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <!--
+      Path to dotnet publish output.
+      Run: dotnet publish ../ClaudeUsageServer.csproj -c Release -r win-x64 -o ../publish/
+      Override at build time: dotnet build -p:PublishDir=C:\my\path\
+    -->
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\publish\</PublishDir>
+    <!-- Expose PublishDir to the WiX preprocessor as $(var.PublishDir). -->
+    <DefineConstants>PublishDir=$(PublishDir)</DefineConstants>
+    <!-- ICE03 flags CustomAction.Target values > 255 chars from the old MSI schema.
+         Modern Windows Installer (Win7+) handles longer Formatted strings at runtime. -->
+    <SuppressIces>ICE03</SuppressIces>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="4.0.5" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.5" />
+  </ItemGroup>
+</Project>

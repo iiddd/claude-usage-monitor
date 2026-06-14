@@ -1,0 +1,236 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!--
+    ClaudeUsageServer installer — WiX v4 SDK-style, x64, per-machine.
+
+    Service account : LocalSystem
+      Running as the interactive user requires knowing their password, which breaks
+      one-click install for Microsoft accounts and domain accounts. LocalSystem is
+      reliable. The deferred custom action CA_WriteUserPaths records the installing
+      user's %USERPROFILE% and %APPDATA% (captured in the UI sequence while running
+      as the user, before UAC elevation) and writes them into appsettings.json so the
+      service can locate credentials and the Claude CLI.
+
+    Log directory   : %ProgramData%\ClaudeUsageServer\logs\
+      Program Files is read-only for non-admin processes at runtime.
+
+    Upgrade policy  : Major upgrade (stable UpgradeCode, new ProductCode per version).
+      appsettings.json is overwritten on upgrade — use env-var overrides
+      (ClaudeUsageServer__CredentialsPath, etc.) if you need to preserve settings.
+  -->
+
+  <Package Name="Claude Usage Server"
+           Manufacturer="Andrey Merkulov"
+           Version="1.0.0"
+           UpgradeCode="B8C9D0E1-F2A3-4567-2345-67890ABCDEF0"
+           Language="1033"
+           Codepage="1252"
+           Scope="perMachine">
+
+    <!-- Clean major-upgrade: remove old then install new in the same transaction. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <!-- Single embedded CAB; produces a self-contained MSI. -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- ── Directory structure ─────────────────────────────────────────────── -->
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="ClaudeUsageServer" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="PROGRAMDATADIR" Name="ClaudeUsageServer">
+        <Directory Id="LOGSDIR" Name="logs" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- ── Components ──────────────────────────────────────────────────────── -->
+
+    <!--
+      Main executable + Windows Service registration.
+      ServiceInstall/ServiceControl must live in the same component as the exe KeyPath.
+    -->
+    <Component Id="MainExeComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="MainExeFile"
+            Source="$(var.PublishDir)ClaudeUsageServer.exe"
+            KeyPath="yes" />
+      <ServiceInstall Id="ServiceInstall"
+                      Name="ClaudeUsageServer"
+                      DisplayName="Claude Usage Server"
+                      Description="Proxies Claude Code OAuth usage data to the iCUE widget."
+                      Type="ownProcess"
+                      Start="auto"
+                      Account="LocalSystem"
+                      ErrorControl="normal" />
+      <ServiceControl Id="ServiceControl"
+                      Name="ClaudeUsageServer"
+                      Start="install"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
+    </Component>
+
+    <!-- appsettings.json: separate component so the CA_WriteUserPaths action can update it. -->
+    <Component Id="AppConfigComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="AppSettingsJson"
+            Source="$(var.PublishDir)appsettings.json"
+            KeyPath="yes" />
+    </Component>
+
+    <!-- Application assembly and runtime manifest files. -->
+    <Component Id="AppDllComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="AppDll" Source="$(var.PublishDir)ClaudeUsageServer.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="AppDepsComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="AppDeps" Source="$(var.PublishDir)ClaudeUsageServer.deps.json" KeyPath="yes" />
+    </Component>
+    <Component Id="AppRuntimeConfigComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="AppRuntimeConfig" Source="$(var.PublishDir)ClaudeUsageServer.runtimeconfig.json" KeyPath="yes" />
+    </Component>
+
+    <!-- Serilog and related logging DLLs. -->
+    <Component Id="SerilogComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="Serilog" Source="$(var.PublishDir)Serilog.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogAspNetCoreComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogAspNetCore" Source="$(var.PublishDir)Serilog.AspNetCore.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogExtHostingComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogExtHosting" Source="$(var.PublishDir)Serilog.Extensions.Hosting.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogExtLoggingComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogExtLogging" Source="$(var.PublishDir)Serilog.Extensions.Logging.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogFmtCompactComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogFmtCompact" Source="$(var.PublishDir)Serilog.Formatting.Compact.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogSettingsCfgComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogSettingsCfg" Source="$(var.PublishDir)Serilog.Settings.Configuration.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogSinkConsoleComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogSinkConsole" Source="$(var.PublishDir)Serilog.Sinks.Console.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogSinkDebugComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogSinkDebug" Source="$(var.PublishDir)Serilog.Sinks.Debug.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogSinkEventLogComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogSinkEventLog" Source="$(var.PublishDir)Serilog.Sinks.EventLog.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SerilogSinkFileComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SerilogSinkFile" Source="$(var.PublishDir)Serilog.Sinks.File.dll" KeyPath="yes" />
+    </Component>
+
+    <!-- .NET runtime support DLLs. -->
+    <Component Id="MsExtDependencyModelComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="MsExtDependencyModel" Source="$(var.PublishDir)Microsoft.Extensions.DependencyModel.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="MsExtWinServicesComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="MsExtWinServices" Source="$(var.PublishDir)Microsoft.Extensions.Hosting.WindowsServices.dll" KeyPath="yes" />
+    </Component>
+    <Component Id="SvcControllerComponent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="SvcController" Source="$(var.PublishDir)System.ServiceProcess.ServiceController.dll" KeyPath="yes" />
+    </Component>
+
+    <!-- Create %ProgramData%\ClaudeUsageServer\logs\ on install, remove on uninstall. -->
+    <!-- Explicit GUID required: Guid="*" is unsupported for directory-keyed components. -->
+    <Component Id="ProgramDataLogsDir" Directory="LOGSDIR" Guid="F1A2B3C4-D5E6-7890-F1A2-B3C4D5E67890">
+      <CreateFolder />
+    </Component>
+
+    <!--
+      Register the Windows Event Log source so Serilog's EventLog sink can write
+      without needing a custom message DLL. EventCreate.exe is a standard Windows
+      tool; using it as the EventMessageFile is a well-known workaround that lets
+      the service write plain-text entries without shipping a resource DLL.
+    -->
+    <Component Id="EventLogSourceComponent" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Id="EventLogSourceKey"
+                     Root="HKLM"
+                     Key="SYSTEM\CurrentControlSet\Services\EventLog\Application\ClaudeUsageServer"
+                     Name="EventMessageFile"
+                     Value="%SystemRoot%\System32\EventCreate.exe"
+                     Type="expandable"
+                     KeyPath="yes" />
+    </Component>
+
+    <!-- ── Features ────────────────────────────────────────────────────────── -->
+
+    <Feature Id="Complete" Title="Claude Usage Server" Level="1">
+      <ComponentRef Id="MainExeComponent" />
+      <ComponentRef Id="AppConfigComponent" />
+      <ComponentRef Id="AppDllComponent" />
+      <ComponentRef Id="AppDepsComponent" />
+      <ComponentRef Id="AppRuntimeConfigComponent" />
+      <ComponentRef Id="SerilogComponent" />
+      <ComponentRef Id="SerilogAspNetCoreComponent" />
+      <ComponentRef Id="SerilogExtHostingComponent" />
+      <ComponentRef Id="SerilogExtLoggingComponent" />
+      <ComponentRef Id="SerilogFmtCompactComponent" />
+      <ComponentRef Id="SerilogSettingsCfgComponent" />
+      <ComponentRef Id="SerilogSinkConsoleComponent" />
+      <ComponentRef Id="SerilogSinkDebugComponent" />
+      <ComponentRef Id="SerilogSinkEventLogComponent" />
+      <ComponentRef Id="SerilogSinkFileComponent" />
+      <ComponentRef Id="MsExtDependencyModelComponent" />
+      <ComponentRef Id="MsExtWinServicesComponent" />
+      <ComponentRef Id="SvcControllerComponent" />
+      <ComponentRef Id="ProgramDataLogsDir" />
+      <ComponentRef Id="EventLogSourceComponent" />
+    </Feature>
+
+    <!-- ── Path capture (UI sequence, user context before elevation) ────────── -->
+
+    <!--
+      Properties set while still running as the installing user (before UAC hands
+      off to the elevated server process). ALL-CAPS property names propagate from
+      the client to the server process automatically in MSI.
+      Secure="yes" allows them to be passed in elevated / administrative installs.
+    -->
+    <Property Id="USERPROFILEPATH" Secure="yes" />
+    <Property Id="APPDATAPATH" Secure="yes" />
+
+    <SetProperty Id="USERPROFILEPATH" Sequence="ui" Before="ExecuteAction"
+                 Value="[%USERPROFILE]" />
+    <SetProperty Id="APPDATAPATH" Sequence="ui" Before="ExecuteAction"
+                 Value="[%APPDATA]" />
+
+    <!-- ── Deferred custom action: write paths into appsettings.json ─────────── -->
+
+    <!--
+      Build the PowerShell command in the execute sequence after USERPROFILEPATH/
+      APPDATAPATH have propagated from the UI sequence.
+
+      The script reads appsettings.json, sets CredentialsPath and ClaudeCliPath to
+      the installing user's paths, and writes the file back with UTF-8 encoding.
+
+      Return="ignore": a failure (e.g., PowerShell policy or path issues) does not
+      roll back the install. The service will still start, but CredentialsPath and
+      ClaudeCliPath will remain empty. Since the service runs as LocalSystem, empty
+      paths will auto-resolve to the SYSTEM profile (wrong). If this happens, the
+      user can set ClaudeUsageServer__CredentialsPath and ClaudeUsageServer__ClaudeCliPath
+      as environment variables on the service, or edit appsettings.json directly.
+
+      Note: [INSTALLFOLDER] ends with a backslash in MSI, so concatenating
+      "appsettings.json" directly produces the correct full path.
+    -->
+    <SetProperty Id="CA_WriteUserPaths" Sequence="execute" Before="CA_WriteUserPaths"
+      Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NonInteractive -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; { param([string]$f,[string]$c,[string]$l) try { $j = Get-Content $f -Raw | ConvertFrom-Json; $j.ClaudeUsageServer.CredentialsPath = $c; $j.ClaudeUsageServer.ClaudeCliPath = $l; $j | ConvertTo-Json -Depth 10 | Set-Content $f -Encoding UTF8 } catch {} } '[INSTALLFOLDER]appsettings.json' '[USERPROFILEPATH]\.claude\.credentials.json' '[APPDATAPATH]\npm\claude.cmd'&quot;" />
+
+    <CustomAction Id="CA_WriteUserPaths"
+                  BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixQuietExec64"
+                  Execute="deferred"
+                  Return="ignore"
+                  Impersonate="no" />
+
+    <InstallExecuteSequence>
+      <!-- Run after files land on disk; skip on uninstall and repair. -->
+      <Custom Action="CA_WriteUserPaths" After="InstallFiles"
+              Condition="NOT REMOVE AND NOT REINSTALL" />
+    </InstallExecuteSequence>
+
+  </Package>
+
+</Wix>

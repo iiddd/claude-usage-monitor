@@ -168,12 +168,19 @@
 		function startResetTimer() {
 			if (resetTimer) clearInterval(resetTimer);
 			resetTimer = setInterval(function () {
+				var now = Date.now();
 				var el5 = document.getElementById('reset-5h');
 				var el7 = document.getElementById('reset-7d');
-				if (el5 && lastResetsAt.fiveHour)
+				var pastReset = false;
+				if (el5 && lastResetsAt.fiveHour) {
 					el5.textContent = ClaudeUsage.formatTimeUntil(lastResetsAt.fiveHour);
-				if (el7 && lastResetsAt.sevenDay)
+					if (new Date(lastResetsAt.fiveHour).getTime() < now) pastReset = true;
+				}
+				if (el7 && lastResetsAt.sevenDay) {
 					el7.textContent = ClaudeUsage.formatTimeUntil(lastResetsAt.sevenDay);
+					if (new Date(lastResetsAt.sevenDay).getTime() < now) pastReset = true;
+				}
+				if (pastReset) fetchUsage();
 			}, 30000);
 		}
 

@@ -21,10 +21,19 @@ try
     builder.Host.UseWindowsService(o => o.ServiceName = "ClaudeUsageServer");
 
     // ── Serilog ────────────────────────────────────────────────────────────
-    builder.Host.UseSerilog((_, _, cfg) =>
+    builder.Host.UseSerilog((context, _, cfg) =>
     {
-        var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+        var logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "ClaudeUsageServer", "logs");
         Directory.CreateDirectory(logDir);
+
+        // Read log-sizing options early from configuration so Serilog picks them up
+        // before the DI container finishes building (LogCleanupService uses the DI
+        // values at runtime for the total-size sweep).
+        var section = context.Configuration.GetSection(ServerOptions.SectionName);
+        var retentionDays  = section.GetValue<int>("LogRetentionDays",  14);
+        var maxFileSizeMB  = section.GetValue<int>("LogMaxFileSizeMB",  10);
 
         cfg.MinimumLevel.Information()
            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
@@ -33,7 +42,9 @@ try
            .WriteTo.File(
                path: Path.Combine(logDir, "claudeusageserver-.log"),
                rollingInterval: RollingInterval.Day,
-               retainedFileCountLimit: 14,
+               retainedFileCountLimit: retentionDays,
+               fileSizeLimitBytes: (long)maxFileSizeMB * 1024L * 1024L,
+               rollOnFileSizeLimit: true,
                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
            .WriteTo.EventLog(
                source: "ClaudeUsageServer",
@@ -50,6 +61,7 @@ try
     builder.Services.AddSingleton<CredentialStore>();
     builder.Services.AddSingleton<UsageCache>();
     builder.Services.AddHostedService<CredentialWatcherService>();
+    builder.Services.AddHostedService<LogCleanupService>();
     builder.Services.AddHttpClient();
 
     builder.Services.ConfigureHttpJsonOptions(o =>

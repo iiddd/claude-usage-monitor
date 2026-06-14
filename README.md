@@ -24,7 +24,7 @@ The service owns the token entirely. The widget sends no credentials; it just ca
 
 - .NET 8 SDK (`winget install Microsoft.DotNet.SDK.8`)
 - Claude Code installed and authenticated (`~/.claude/.credentials.json` exists)
-- The `claude` CLI must be on `PATH` (used to trigger automatic token refresh)
+- The `claude` CLI must be reachable from the service account (see **Token refresh** below)
 
 ---
 
@@ -116,9 +116,13 @@ Every value is also overridable via environment variable using the standard
 |-----|---------|-------------|
 | `Port` | `41920` | TCP port Kestrel binds on (127.0.0.1 only) |
 | `CredentialsPath` | *(empty)* | Path to the credentials JSON file. Empty = `%USERPROFILE%\.claude\.credentials.json` |
+| `ClaudeCliPath` | *(empty)* | Full path to `claude.cmd`. Empty = auto-derived from `CredentialsPath` or `%USERPROFILE%`. **Must be set explicitly when running as LocalSystem** (see Token refresh). |
 | `RefreshBufferMinutes` | `5` | How many minutes before token expiry to trigger a proactive refresh |
 | `RetryIntervalSeconds` | `60` | How long to wait before retrying a failed refresh attempt |
 | `CacheTtlSeconds` | `60` | How long a successful Anthropic response is served from cache before a fresh upstream call is made |
+| `LogRetentionDays` | `14` | Number of log files Serilog keeps before deleting the oldest. With daily rolling this equals calendar days; with size-based intra-day rolling it may be fewer. See **Log retention** below. |
+| `LogMaxFileSizeMB` | `10` | Maximum size of a single log file in MB. When reached, Serilog rolls to a new file with a numeric suffix (e.g. `claudeusageserver-20260614_001.log`). |
+| `LogMaxTotalSizeMB` | `100` | Safety-net cap on the total size of all log files combined. A background task checks this on startup and every 24 hours, deleting oldest files until back under the limit regardless of `LogRetentionDays`. |
 
 **Example — custom port via environment variable:**
 
@@ -127,7 +131,27 @@ $env:ClaudeUsageServer__Port = "41921"
 sc.exe start ClaudeUsageServer
 ```
 
-**Note:** `CredentialsPath` is never written to logs even when set via environment variable.
+**Note:** `CredentialsPath` and `ClaudeCliPath` are never written to logs even when set via environment variable.
+
+---
+
+## Log retention
+
+Log files are written to `%ProgramData%\ClaudeUsageServer\logs\`. Two independent layers prevent unbounded disk growth:
+
+**Layer 1 — Serilog per-file and retention limits** (`LogRetentionDays`, `LogMaxFileSizeMB`):
+
+- A new log file is started each calendar day (`claudeusageserver-YYYYMMDD.log`).
+- If a single day's file reaches `LogMaxFileSizeMB` (default 10 MB), Serilog rolls to a new file with a numeric suffix (`claudeusageserver-20260614_001.log`, `_002.log`, …) rather than growing unbounded.
+- Serilog automatically deletes the oldest files once the total count exceeds `LogRetentionDays` (default 14). With daily rolling and no intra-day size spikes, 14 files = 14 calendar days. If size-based rolling produces extra files within a day, fewer calendar days are retained — the total-size cap below handles that edge case.
+
+**Layer 2 — Total-size safety net** (`LogMaxTotalSizeMB`):
+
+- A background task runs once on service startup and again every 24 hours.
+- It sums the sizes of all `*.log` files in the log directory.
+- If the total exceeds `LogMaxTotalSizeMB` (default 100 MB), it deletes the oldest files (by creation time) until back under the limit, regardless of `LogRetentionDays`.
+- Only filenames and sizes are logged during cleanup — file contents are never read or logged.
+- The currently-active log file (held open by Serilog) cannot be deleted on Windows; the cleanup task logs a warning and skips it if encountered.
 
 ---
 
@@ -193,6 +217,138 @@ every `RetryIntervalSeconds` seconds without crashing.
 The service also installs a `FileSystemWatcher` on the credentials file. If Claude Code
 (or any other tool) refreshes the token externally, the service picks up the new token
 within ~500 ms — no service restart required.
+
+### Running as LocalSystem (important)
+
+When installed as a Windows Service the process runs as **LocalSystem**, which does not
+inherit your user's `PATH`. The `claude` CLI is typically installed as a `.cmd` wrapper
+in `%APPDATA%\npm\` — that directory is not on LocalSystem's PATH and `.cmd` files
+cannot be launched as a direct process target regardless.
+
+**You must set `ClaudeCliPath` explicitly in `appsettings.json`:**
+
+```json
+"ClaudeCliPath": "C:\\Users\\YourName\\AppData\\Roaming\\npm\\claude.cmd"
+```
+
+To find the correct path:
+
+```powershell
+(Get-Command claude).Source
+```
+
+If `ClaudeCliPath` is left empty the service attempts to infer the path from
+`CredentialsPath` (or `%USERPROFILE%`). If the inferred path does not exist it logs
+a one-time warning and skips CLI-based refresh until the setting is corrected — the
+service continues running and the `FileSystemWatcher` still picks up external refreshes.
+
+---
+
+## MSI installer (ClaudeUsageServer.Installer)
+
+The `ClaudeUsageServer.Installer` project produces a self-contained MSI that installs the service, creates the log directory, and registers the Windows Event Log source in one step.
+
+### What the installer does
+
+1. Copies all service files to `%ProgramFiles%\ClaudeUsageServer\`.
+2. Creates `%ProgramData%\ClaudeUsageServer\logs\` for log files.
+3. Registers the Windows Event Log source `ClaudeUsageServer` so Serilog's EventLog sink can write without a custom message DLL.
+4. Installs the Windows Service (`ClaudeUsageServer`, auto-start, account: LocalSystem).
+5. Runs a custom action (PowerShell) that writes the installing user's `%USERPROFILE%` and `%APPDATA%` paths into `appsettings.json` so the LocalSystem service can find the credentials file and Claude CLI.
+6. Starts the service.
+
+**Service account:** LocalSystem. Running as the interactive user requires knowing their Windows password at install time, which is unavailable for Microsoft accounts and domain accounts. LocalSystem is used instead; the custom action in step 5 bridges the gap by writing explicit user-specific paths into `appsettings.json`.
+
+### Build the MSI
+
+Publish the service first, then build the installer:
+
+```powershell
+# Step 1 — publish the service (produces publish\ next to the solution)
+dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish\
+
+# Step 2 — build the MSI (outputs to ClaudeUsageServer.Installer\bin\x64\Release\)
+dotnet build ClaudeUsageServer.Installer\ClaudeUsageServer.Installer.wixproj -c Release -p:Platform=x64
+```
+
+Or build both from the solution in one pass:
+
+```powershell
+dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish\
+dotnet build ClaudeUsageServer.sln -c Release -p:Platform=x64
+```
+
+The MSI is produced at `ClaudeUsageServer.Installer\bin\x64\Release\ClaudeUsageServer.msi`.
+
+### Install
+
+Double-click `ClaudeUsageServer.msi`. Accept the UAC elevation prompt. The installer copies files, registers the service, and starts it. No further configuration is needed for a standard single-user Windows 10/11 machine.
+
+After install, verify the service is running:
+
+```powershell
+curl http://127.0.0.1:41920/health   # → ok
+curl http://127.0.0.1:41920/status   # → {"tokenValid":true,...}
+```
+
+### Uninstall
+
+**Settings → Apps → Installed apps → Claude Usage Server → Uninstall**, or via Add/Remove Programs.
+
+The uninstaller stops the service, removes the registration, and removes all files from `%ProgramFiles%\ClaudeUsageServer\`. It also removes the `%ProgramData%\ClaudeUsageServer\logs\` directory created during install.
+
+Log files already written are **not** removed; delete `%ProgramData%\ClaudeUsageServer\` manually after uninstall if you want a clean slate:
+
+```powershell
+Remove-Item -Recurse -Force "$env:ProgramData\ClaudeUsageServer"
+```
+
+### Upgrade
+
+Install a new MSI over an existing installation. The installer automatically removes the old version first (major upgrade), then installs the new one. The service is stopped before removal and restarted after install.
+
+**appsettings.json is overwritten on upgrade.** If you have changed settings, use environment variable overrides instead so they survive upgrades:
+
+```powershell
+# Set on the service via the registry (persists across upgrades)
+$svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer"
+$existing = (Get-ItemProperty $svcKey).Environment
+Set-ItemProperty $svcKey -Name Environment -Value (
+    @("ClaudeUsageServer__CredentialsPath=C:\Users\You\.claude\.credentials.json") + $existing
+)
+```
+
+Or set a system environment variable before restarting the service:
+```powershell
+[System.Environment]::SetEnvironmentVariable("ClaudeUsageServer__Port", "41921", "Machine")
+```
+
+### Troubleshooting
+
+**Service won't start after install**
+
+Check `%ProgramData%\ClaudeUsageServer\logs\` for Serilog log files. The most common cause is the custom action (step 5 above) failing to write the correct paths into `appsettings.json`.
+
+To fix manually, edit `%ProgramFiles%\ClaudeUsageServer\appsettings.json`:
+
+```json
+{
+  "ClaudeUsageServer": {
+    "CredentialsPath": "C:\\Users\\YourName\\.claude\\.credentials.json",
+    "ClaudeCliPath":   "C:\\Users\\YourName\\AppData\\Roaming\\npm\\claude.cmd"
+  }
+}
+```
+
+Then restart the service: `sc.exe start ClaudeUsageServer`
+
+**Port 41920 already in use**
+
+Change `Port` in `appsettings.json` and update the `serverPort` in the iCUE widget settings panel, then restart the service.
+
+**Claude Code not installed or not authenticated**
+
+The service starts but `/status` returns `tokenValid: false`. Install and authenticate Claude Code (`claude login`), then restart the service or wait for the `FileSystemWatcher` to pick up the new credentials file (within ~500 ms of Claude Code writing it).
 
 ---
 

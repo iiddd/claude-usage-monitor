@@ -12,6 +12,7 @@ internal sealed class CredentialWatcherService : BackgroundService
     private readonly IOptionsMonitor<ServerOptions> _options;
     private readonly ILogger<CredentialWatcherService> _logger;
     private FileSystemWatcher? _watcher;
+    private bool _cliPathWarningLogged;
 
     // Capacity-1 channel: multiple rapid FSW events collapse into one reload signal.
     private readonly Channel<bool> _reloadSignal = Channel.CreateBounded<bool>(
@@ -164,19 +165,53 @@ internal sealed class CredentialWatcherService : BackgroundService
 
     private async Task<bool> TryRunClaudeCliAsync(CancellationToken stoppingToken)
     {
+        var cliPath = _options.CurrentValue.ResolvedClaudeCliPath;
+
+        if (!File.Exists(cliPath))
+        {
+            if (!_cliPathWarningLogged)
+            {
+                _cliPathWarningLogged = true;
+                _logger.LogWarning(
+                    "Claude CLI not found at expected path. " +
+                    "Set ClaudeUsageServer:ClaudeCliPath in appsettings.json to the full path " +
+                    "of claude.cmd (run 'Get-Command claude' in PowerShell to find it). " +
+                    "Token refresh will not work until this is resolved.");
+            }
+            return false;
+        }
+
+        // Reset warning flag so it fires again if the path is later removed.
+        _cliPathWarningLogged = false;
+
         try
         {
             _logger.LogInformation("Invoking claude CLI to trigger credential refresh");
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = "claude",
-                Arguments = "--version",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
+            // .cmd files cannot be launched directly as a process target;
+            // they must be invoked via cmd.exe /c.
+            var isCmdFile = cliPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+                         || cliPath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
+
+            var psi = isCmdFile
+                ? new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"{cliPath}\" --version",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                }
+                : new ProcessStartInfo
+                {
+                    FileName = cliPath,
+                    Arguments = "--version",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                };
 
             using var process = new Process { StartInfo = psi };
             process.Start();
