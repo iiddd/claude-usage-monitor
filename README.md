@@ -206,17 +206,47 @@ file contents, or environment variable values.
 
 ## Token refresh
 
-On startup the service reads `~/.claude/.credentials.json` and schedules a refresh
-at `expiresAt − RefreshBufferMinutes`. At refresh time it runs `claude --version`,
-which causes the Claude CLI to silently check and renew the token, then re-reads the
-credentials file.
+### Mechanism
 
-If the CLI is unavailable or the refresh fails, the service logs a warning and retries
-every `RetryIntervalSeconds` seconds without crashing.
+On startup the service reads `~/.claude/.credentials.json` and schedules a proactive
+refresh at `expiresAt − RefreshBufferMinutes` (default: 5 minutes before expiry). The
+OAuth token is valid for approximately **26 hours** after each successful refresh, so
+the CLI is invoked roughly once per day under normal operation.
 
-The service also installs a `FileSystemWatcher` on the credentials file. If Claude Code
-(or any other tool) refreshes the token externally, the service picks up the new token
-within ~500 ms — no service restart required.
+At refresh time the service runs:
+
+```
+claude -p "hi" --model haiku --tools "" --no-session-persistence --effort low
+```
+
+This sends a minimal prompt to the Anthropic API. The act of making a real API call
+causes the Claude CLI to silently renew the OAuth token and write the updated
+credentials back to `~/.claude/.credentials.json`. The service detects the file change
+(via `FileSystemWatcher`) and loads the new token within ~500 ms.
+
+> **Note:** `claude --version` does **not** refresh the OAuth token. Only actual API
+> calls trigger a renewal. This is why the CLI invocation sends a real (minimal) prompt.
+
+### Cost trade-off
+
+Each token refresh makes a real Anthropic API call using the Haiku model with a
+one-word prompt and minimal output. This counts against your Claude Code usage limits
+(the same 5-hour and 7-day windows that this widget displays). The cost is negligible
+in practice — one micro-request per ~26 hours — but it is non-zero. A direct
+OAuth `refresh_token` grant would avoid this overhead, but that mechanism is not
+exposed to third-party tools via the Claude Code CLI.
+
+### Retry behaviour
+
+If the CLI call fails (not found, non-zero exit, or the token is still expired after
+the call), the service logs a warning and retries every `RetryIntervalSeconds` (default:
+60 s). Once a refresh succeeds and the new token has ample lifetime remaining, retries
+stop and the service returns to passive watching until the next scheduled refresh.
+
+The `FileSystemWatcher` remains active at all times. If Claude Code (or any other tool)
+refreshes the token externally, the service picks up the new token within ~500 ms —
+no service restart required, and the next scheduled refresh is recalculated from the
+updated `expiresAt`.
 
 ### Running as LocalSystem (important)
 

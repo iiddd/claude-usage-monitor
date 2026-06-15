@@ -131,13 +131,17 @@ internal sealed class CredentialWatcherService : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (_store.HasValidToken) return;
+            // Exit if the token now has ample time remaining (e.g. FSW delivered a fresh token
+            // during the retry wait). Do NOT exit merely because the token is still technically
+            // non-expired — we may be in the buffer window and a proactive refresh is needed.
+            if (_store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero)
+                return;
 
             bool cliOk = await TryRunClaudeCliAsync(stoppingToken);
             if (cliOk)
             {
                 await TryLoadCredentialsAsync();
-                if (_store.HasValidToken)
+                if (_store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero)
                 {
                     _logger.LogInformation("Token refresh succeeded");
                     return;
@@ -154,7 +158,9 @@ internal sealed class CredentialWatcherService : BackgroundService
                 using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 retryCts.CancelAfter(TimeSpan.FromSeconds(_options.CurrentValue.RetryIntervalSeconds));
                 await _reloadSignal.Reader.ReadAsync(retryCts.Token);
-                if (_store.HasValidToken) return;
+                // If FSW delivered a fresh token with ample lifetime, exit the retry loop.
+                if (_store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero)
+                    return;
             }
             catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
             {
@@ -186,7 +192,14 @@ internal sealed class CredentialWatcherService : BackgroundService
 
         try
         {
-            _logger.LogInformation("Invoking claude CLI to trigger credential refresh");
+            _logger.LogInformation("Invoking claude CLI to trigger OAuth token refresh");
+
+            // Send a minimal prompt so the CLI makes a real API call and refreshes the token.
+            // --version does NOT cause a token refresh; only actual API calls do.
+            // --model haiku / --tools "" / --effort low minimise cost and latency.
+            // --no-session-persistence avoids writing session state to disk.
+            const string refreshArgs =
+                "-p \"hi\" --model haiku --tools \"\" --no-session-persistence --effort low";
 
             // .cmd files cannot be launched directly as a process target;
             // they must be invoked via cmd.exe /c.
@@ -197,7 +210,7 @@ internal sealed class CredentialWatcherService : BackgroundService
                 ? new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
-                    Arguments = $"/c \"{cliPath}\" --version",
+                    Arguments = $"/c \"{cliPath}\" {refreshArgs}",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -206,7 +219,7 @@ internal sealed class CredentialWatcherService : BackgroundService
                 : new ProcessStartInfo
                 {
                     FileName = cliPath,
-                    Arguments = "--version",
+                    Arguments = refreshArgs,
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -215,7 +228,15 @@ internal sealed class CredentialWatcherService : BackgroundService
 
             using var process = new Process { StartInfo = psi };
             process.Start();
+
+            // Drain stdout and stderr concurrently with WaitForExitAsync to prevent
+            // the pipe buffer from filling and blocking the child process.
+            // The response text is intentionally discarded — only exit code matters.
+            var drainOut = process.StandardOutput.ReadToEndAsync(stoppingToken);
+            var drainErr = process.StandardError.ReadToEndAsync(stoppingToken);
             await process.WaitForExitAsync(stoppingToken);
+            await Task.WhenAll(drainOut, drainErr);
+
             return process.ExitCode == 0;
         }
         catch (OperationCanceledException) { throw; }
