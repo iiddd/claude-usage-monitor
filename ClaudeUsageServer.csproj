@@ -15,4 +15,25 @@
     <PackageReference Include="Serilog.Sinks.EventLog" Version="4.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <_ContentIncludedByDefault Remove="publish\publish_probe\web.config" />
+    <_ContentIncludedByDefault Remove="publish\web.config" />
+    <_ContentIncludedByDefault Remove="publish\appsettings.json" />
+    <_ContentIncludedByDefault Remove="publish\ClaudeUsageServer.deps.json" />
+    <_ContentIncludedByDefault Remove="publish\ClaudeUsageServer.Installer\obj\ClaudeUsageServer.Installer.wixproj.nuget.dgspec.json" />
+    <_ContentIncludedByDefault Remove="publish\ClaudeUsageServer.Installer\obj\project.assets.json" />
+    <_ContentIncludedByDefault Remove="publish\ClaudeUsageServer.runtimeconfig.json" />
+    <_ContentIncludedByDefault Remove="publish\ClaudeUsageServer.staticwebassets.endpoints.json" />
+    <_ContentIncludedByDefault Remove="publish\publish_probe\appsettings.json" />
+    <_ContentIncludedByDefault Remove="publish\publish_probe\ClaudeUsageServer.deps.json" />
+    <_ContentIncludedByDefault Remove="publish\publish_probe\ClaudeUsageServer.runtimeconfig.json" />
+    <_ContentIncludedByDefault Remove="publish\publish_probe\ClaudeUsageServer.staticwebassets.endpoints.json" />
+    <_ContentIncludedByDefault Remove="publish\publish_probe\widgets\ClaudeUsageWidget\manifest.json" />
+    <_ContentIncludedByDefault Remove="publish\publish_probe\widgets\ClaudeUsageWidget\translation.json" />
+    <_ContentIncludedByDefault Remove="publish\widgets\ClaudeUsageWidget\manifest.json" />
+    <_ContentIncludedByDefault Remove="publish\widgets\ClaudeUsageWidget\translation.json" />
+    <_ContentIncludedByDefault Remove="ClaudeUsageServer.Installer\obj\ClaudeUsageServer.Installer.wixproj.nuget.dgspec.json" />
+    <_ContentIncludedByDefault Remove="ClaudeUsageServer.Installer\obj\project.assets.json" />
+  </ItemGroup>
+
 </Project>

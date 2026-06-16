@@ -30,8 +30,11 @@ The service owns the token entirely. The widget sends no credentials; it just ca
 
 ## Build
 
+### Build everything in one go: publish service + build MSI
+
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained false -o publish\
+dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish\
+dotnet build ClaudeUsageServer.Installer\ClaudeUsageServer.Installer.wixproj -c Release -p:Platform=x64
 ```
 
 For a self-contained single-file executable:

@@ -195,11 +195,9 @@ internal sealed class CredentialWatcherService : BackgroundService
             _logger.LogInformation("Invoking claude CLI to trigger OAuth token refresh");
 
             // Send a minimal prompt so the CLI makes a real API call and refreshes the token.
-            // --version does NOT cause a token refresh; only actual API calls do.
-            // --model haiku / --tools "" / --effort low minimise cost and latency.
-            // --no-session-persistence avoids writing session state to disk.
-            const string refreshArgs =
-                "-p \"hi\" --model haiku --tools \"\" --no-session-persistence --effort low";
+            // Keep args minimal: extra flags like --effort/--no-session-persistence may not be
+            // recognised by all CLI versions and cause an immediate non-zero exit.
+            const string refreshArgs = "-p \"hi\"";
 
             // .cmd files cannot be launched directly as a process target;
             // they must be invoked via cmd.exe /c.
@@ -226,16 +224,48 @@ internal sealed class CredentialWatcherService : BackgroundService
                     CreateNoWindow = true,
                 };
 
+            // When the service runs as LocalSystem, USERPROFILE/APPDATA point to the system
+            // account's profile and node may not be on PATH. Override them with the actual
+            // user's directories derived from the credentials file path so the CLI can find
+            // both node.js (via the npm bin dir) and the OAuth credentials it needs to call
+            // the API and trigger a token refresh.
+            var credPath = _options.CurrentValue.ResolvedCredentialsPath;
+            var claudeDir = Path.GetDirectoryName(credPath) ?? string.Empty;
+            var userHome = Path.GetDirectoryName(claudeDir) ?? string.Empty;
+
+            if (!string.IsNullOrEmpty(userHome))
+            {
+                psi.Environment["USERPROFILE"] = userHome;
+                psi.Environment["HOME"] = userHome;
+                psi.Environment["APPDATA"] = Path.Combine(userHome, "AppData", "Roaming");
+                psi.Environment["LOCALAPPDATA"] = Path.Combine(userHome, "AppData", "Local");
+
+                // Prepend the user's npm bin dir so node/claude are resolvable even when the
+                // service account's PATH doesn't include them.
+                var npmBin = Path.Combine(userHome, "AppData", "Roaming", "npm");
+                var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+                if (!currentPath.Contains(npmBin, StringComparison.OrdinalIgnoreCase))
+                    psi.Environment["PATH"] = npmBin + ";" + currentPath;
+            }
+
             using var process = new Process { StartInfo = psi };
             process.Start();
 
             // Drain stdout and stderr concurrently with WaitForExitAsync to prevent
             // the pipe buffer from filling and blocking the child process.
-            // The response text is intentionally discarded — only exit code matters.
-            var drainOut = process.StandardOutput.ReadToEndAsync(stoppingToken);
-            var drainErr = process.StandardError.ReadToEndAsync(stoppingToken);
+            var outTask = process.StandardOutput.ReadToEndAsync(stoppingToken);
+            var errTask = process.StandardError.ReadToEndAsync(stoppingToken);
             await process.WaitForExitAsync(stoppingToken);
-            await Task.WhenAll(drainOut, drainErr);
+            await Task.WhenAll(outTask, errTask);
+
+            if (process.ExitCode != 0)
+            {
+                var stderr = errTask.Result.Trim();
+                _logger.LogWarning(
+                    "Claude CLI exited with code {ExitCode}{Stderr}",
+                    process.ExitCode,
+                    string.IsNullOrEmpty(stderr) ? string.Empty : ": " + stderr);
+            }
 
             return process.ExitCode == 0;
         }
