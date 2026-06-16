@@ -13,7 +13,8 @@
 
     function formatTimeUntil(resetsAt) {
         var diffMs = new Date(resetsAt).getTime() - Date.now();
-        if (diffMs < 60000) return 'resetting...';
+        if (diffMs < 0)      return 'idle';
+        if (diffMs < 60000)  return 'resetting...';
 
         var totalMinutes = Math.floor(diffMs / 60000);
         var totalHours   = Math.floor(totalMinutes / 60);
