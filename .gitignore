@@ -1,9 +1,72 @@
-﻿bin/
+﻿# Build output
+bin/
 obj/
+out/
+publish/
+publish_probe/
+artifacts/
+dist/
+
+# NuGet / packages
 /packages/
+*.nupkg
+*.snupkg
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
 riderModule.iml
-/_ReSharper.Caches/
-/.idea
-publish
-publish_probe
+
+# ReSharper
+_ReSharper.Caches/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs / diagnostics
+logs/
 *.log
+*.log.*
+crash/
+crashes/
+dumps/
+*.dmp
+*.mdmp
+
+# Local config / secrets
+.env
+.env.*
+*.local
+*.secret.*
+secrets.json
+appsettings.Development.json
+appsettings.Local.json
+
+# Claude credentials, never commit
+.claude/
+**/.claude/
+.credentials.json
+**/.credentials.json
+
+# Installer / packaging output
+*.msi
+*.wixpdb
+*.cab
+*.msix
+*.appx
+*.appxbundle
+
+# Test / coverage output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+coverage.cobertura.xml
+
+# OS junk
+.DS_Store
+Thumbs.db
