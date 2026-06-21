@@ -46,6 +46,14 @@
 
 		<meta
 			name="x-icue-property"
+			content="emptyBlockColor"
+			data-label="tr('Empty Block Color')"
+			data-type="color"
+			data-default="'#484848'"
+		>
+
+		<meta
+			name="x-icue-property"
 			content="percentageColor"
 			data-label="tr('Percentage Color')"
 			data-type="color"
@@ -104,7 +112,7 @@
 			},
 			{
 				"title": "tr('Widget Personalization')",
-				"properties": ["textColor", "blockColor", "percentageColor", "colorLow", "colorMid", "colorHigh", "backgroundColor", "transparency"]
+				"properties": ["textColor", "blockColor", "emptyBlockColor", "percentageColor", "colorLow", "colorMid", "colorHigh", "backgroundColor", "transparency"]
 			}
 		]
 		</script>
@@ -204,9 +212,10 @@
 			activeInterval = (Number.isFinite(n) && n > 0) ? n : 60;
 
 			ClaudeUsage.configure({
-				thresholdColorCoding: (typeof thresholdColorCoding !== 'undefined') ? !!thresholdColorCoding  : true,
+				thresholdColorCoding: (typeof thresholdColorCoding !== 'undefined') ? (thresholdColorCoding === true || thresholdColorCoding === 'true' || thresholdColorCoding === 1) : true,
 				textColor:            (typeof textColor            !== 'undefined') ? String(textColor)        : '#FFFFFF',
 				blockColor:           (typeof blockColor           !== 'undefined') ? String(blockColor)       : '#3B82F6',
+				emptyBlockColor:      (typeof emptyBlockColor      !== 'undefined') ? String(emptyBlockColor)  : '#484848',
 				percentageColor:      (typeof percentageColor      !== 'undefined') ? String(percentageColor)  : '#FFFFFF',
 				colorLow:             (typeof colorLow             !== 'undefined') ? String(colorLow)         : '#10B981',
 				colorMid:             (typeof colorMid             !== 'undefined') ? String(colorMid)         : '#F59E0B',
@@ -229,6 +238,7 @@
 		}
 
 		function fetchUsage() {
+			resolveConfig();
 			var isStaleResponse = false;
 
 			fetch('http://localhost:41920/usage')

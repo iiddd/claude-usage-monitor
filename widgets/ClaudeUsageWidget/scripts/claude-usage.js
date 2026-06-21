@@ -10,6 +10,7 @@
         thresholdColorCoding: true,
         textColor:       '#FFFFFF',
         blockColor:      '#3B82F6',
+        emptyBlockColor: '#484848',
         percentageColor: '#FFFFFF',
         colorLow:        '#10B981',
         colorMid:        '#F59E0B',
@@ -77,12 +78,12 @@
 
     /* Returns the CSS background value for a block state key. */
     function blockBg(key) {
-        if (key === 'e') return '#2C2C2C';
+        if (key === 'e') return _cfg.emptyBlockColor;
         if (key.charAt(0) === 'f') return key.slice(2);
         var parts = key.split(':');
         var frac  = parseInt(parts[1], 10) / 100;
         var color = parts[2];
-        return 'linear-gradient(to right,' + color + ' ' + frac + '%,#2C2C2C ' + frac + '%)';
+        return 'linear-gradient(to right,' + color + ' ' + frac + '%,' + _cfg.emptyBlockColor + ' ' + frac + '%)';
     }
 
     function ensureBlocks(barEl) {
