@@ -5,6 +5,11 @@ keeps the access token fresh, and exposes a CORS-enabled HTTP proxy on `localhos
 so the iCUE widget running in a browser sandbox can fetch usage data without ever
 touching credentials.
 
+## Preview
+
+![Widget — normal state](docs/preview-normal.png)
+![Widget — error state](docs/preview-error.png)
+
 ## How it works
 
 ```
