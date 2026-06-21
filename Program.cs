@@ -17,6 +17,9 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // Machine-local overrides (gitignored): paths, ports, secrets.
+    builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
     // ── Windows Service host ───────────────────────────────────────────────
     builder.Host.UseWindowsService(o => o.ServiceName = "ClaudeUsageServer");
 

@@ -20,11 +20,91 @@
 			data-unit-label="'s'"
 		>
 
+		<meta
+			name="x-icue-property"
+			content="thresholdColorCoding"
+			data-label="tr('Threshold Color Coding')"
+			data-type="switch"
+			data-default="true"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="textColor"
+			data-label="tr('Text Color')"
+			data-type="color"
+			data-default="'#FFFFFF'"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="blockColor"
+			data-label="tr('Block Color')"
+			data-type="color"
+			data-default="'#3B82F6'"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="percentageColor"
+			data-label="tr('Percentage Color')"
+			data-type="color"
+			data-default="'#FFFFFF'"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="colorLow"
+			data-label="tr('Low Color')"
+			data-type="color"
+			data-default="'#10B981'"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="colorMid"
+			data-label="tr('Medium Color')"
+			data-type="color"
+			data-default="'#F59E0B'"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="colorHigh"
+			data-label="tr('High Color')"
+			data-type="color"
+			data-default="'#EF4444'"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="backgroundColor"
+			data-label="tr('Background Color')"
+			data-type="color"
+			data-default="'#161616'"
+		>
+
+		<meta
+			name="x-icue-property"
+			content="transparency"
+			data-label="tr('Widget Transparency')"
+			data-type="slider"
+			data-default="0"
+			data-min="0"
+			data-max="100"
+			data-step="1"
+			data-unit-label="'%'"
+		>
+
 		<script type="application/json" id="x-icue-groups">
 		[
 			{
 				"title": "tr('Claude Code Usage')",
-				"properties": ["refreshInterval"]
+				"properties": ["refreshInterval", "thresholdColorCoding"]
+			},
+			{
+				"title": "tr('Widget Personalization')",
+				"properties": ["textColor", "blockColor", "percentageColor", "colorLow", "colorMid", "colorHigh", "backgroundColor", "transparency"]
 			}
 		]
 		</script>
@@ -122,6 +202,18 @@
 		function resolveConfig() {
 			var n = parseInt(typeof refreshInterval !== 'undefined' ? refreshInterval : 60, 10);
 			activeInterval = (Number.isFinite(n) && n > 0) ? n : 60;
+
+			ClaudeUsage.configure({
+				thresholdColorCoding: (typeof thresholdColorCoding !== 'undefined') ? !!thresholdColorCoding  : true,
+				textColor:            (typeof textColor            !== 'undefined') ? String(textColor)        : '#FFFFFF',
+				blockColor:           (typeof blockColor           !== 'undefined') ? String(blockColor)       : '#3B82F6',
+				percentageColor:      (typeof percentageColor      !== 'undefined') ? String(percentageColor)  : '#FFFFFF',
+				colorLow:             (typeof colorLow             !== 'undefined') ? String(colorLow)         : '#10B981',
+				colorMid:             (typeof colorMid             !== 'undefined') ? String(colorMid)         : '#F59E0B',
+				colorHigh:            (typeof colorHigh            !== 'undefined') ? String(colorHigh)        : '#EF4444',
+				backgroundColor:      (typeof backgroundColor      !== 'undefined') ? String(backgroundColor)  : '#161616',
+				transparency:         (typeof transparency         !== 'undefined') ? Number(transparency)     : 0
+			});
 		}
 
 		// ── Polling ──────────────────────────────────────────────────
@@ -226,7 +318,7 @@
 				'<script>' +
 				'window.addEventListener("message",function(e){' +
 				'var m=e.data||{};' +
-				'if(m.type==="render"){ClaudeUsage.renderData(m.data);ClaudeUsage.renderStale(!!m.stale);}' +
+				'if(m.type==="render"){if(m.config)ClaudeUsage.configure(m.config);ClaudeUsage.renderStale(!!m.stale);ClaudeUsage.renderData(m.data);}' +
 				'if(m.type==="error")ClaudeUsage.renderError(m.message);' +
 				'if(m.type==="loading")ClaudeUsage.renderLoading();' +
 				'});' +
@@ -263,6 +355,27 @@
 				{
 					label: 'Loading',
 					msg: { type: 'loading' }
+				},
+				{
+					label: 'Custom Style (purple theme, threshold coding OFF)',
+					msg: {
+						type: 'render', stale: false,
+						config: {
+							thresholdColorCoding: false,
+							textColor:          '#E0E0E0',
+							blockColor:         '#8B5CF6',
+							percentageColor:    '#C4B5FD',
+							colorLow:           '#A78BFA',
+							colorMid:           '#C4B5FD',
+							colorHigh:          '#DDD6FE',
+							backgroundColor:    '#1E1E2E',
+							transparency:       0
+						},
+						data: {
+							five_hour: { utilization: 65.0, resets_at: new Date(now + 25 * 60000).toISOString() },
+							seven_day: { utilization: 42.0, resets_at: new Date(now + (3 * 24 * 60 + 45 * 60) * 60000).toISOString() }
+						}
+					}
 				}
 			];
 

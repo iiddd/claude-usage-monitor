@@ -2,73 +2,193 @@
   "en": {
     "translation": {
       "Claude Code Usage": "Claude Code Usage",
-      "Refresh Interval": "Refresh Interval"
+      "Refresh Interval": "Refresh Interval",
+      "Widget Personalization": "Widget Personalization",
+      "Threshold Color Coding": "Threshold Color Coding",
+      "Text Color": "Text Color",
+      "Block Color": "Block Color",
+      "Percentage Color": "Percentage Color",
+      "Low Color": "Low Color",
+      "Medium Color": "Medium Color",
+      "High Color": "High Color",
+      "Background Color": "Background Color",
+      "Widget Transparency": "Widget Transparency"
     }
   },
   "de": {
     "translation": {
       "Claude Code Usage": "Claude Code Nutzung",
-      "Refresh Interval": "Aktualisierungsintervall"
+      "Refresh Interval": "Aktualisierungsintervall",
+      "Widget Personalization": "Widget-Personalisierung",
+      "Threshold Color Coding": "Schwellenwert-Farbkodierung",
+      "Text Color": "Textfarbe",
+      "Block Color": "Blockfarbe",
+      "Percentage Color": "Prozentfarbe",
+      "Low Color": "Niedrige Farbe",
+      "Medium Color": "Mittlere Farbe",
+      "High Color": "Hohe Farbe",
+      "Background Color": "Hintergrundfarbe",
+      "Widget Transparency": "Widget-Transparenz"
     }
   },
   "es": {
     "translation": {
       "Claude Code Usage": "Uso de Claude Code",
-      "Refresh Interval": "Intervalo de actualización"
+      "Refresh Interval": "Intervalo de actualización",
+      "Widget Personalization": "Personalización del widget",
+      "Threshold Color Coding": "Codificación de color por umbral",
+      "Text Color": "Color de texto",
+      "Block Color": "Color de bloque",
+      "Percentage Color": "Color de porcentaje",
+      "Low Color": "Color bajo",
+      "Medium Color": "Color medio",
+      "High Color": "Color alto",
+      "Background Color": "Color de fondo",
+      "Widget Transparency": "Transparencia del widget"
     }
   },
   "fr": {
     "translation": {
       "Claude Code Usage": "Utilisation de Claude Code",
-      "Refresh Interval": "Intervalle de rafraîchissement"
+      "Refresh Interval": "Intervalle de rafraîchissement",
+      "Widget Personalization": "Personnalisation du widget",
+      "Threshold Color Coding": "Codage couleur par seuil",
+      "Text Color": "Couleur du texte",
+      "Block Color": "Couleur des blocs",
+      "Percentage Color": "Couleur du pourcentage",
+      "Low Color": "Couleur basse",
+      "Medium Color": "Couleur moyenne",
+      "High Color": "Couleur haute",
+      "Background Color": "Couleur d'arrière-plan",
+      "Widget Transparency": "Transparence du widget"
     }
   },
   "it": {
     "translation": {
       "Claude Code Usage": "Utilizzo di Claude Code",
-      "Refresh Interval": "Intervallo di aggiornamento"
+      "Refresh Interval": "Intervallo di aggiornamento",
+      "Widget Personalization": "Personalizzazione widget",
+      "Threshold Color Coding": "Codifica colore per soglia",
+      "Text Color": "Colore testo",
+      "Block Color": "Colore blocco",
+      "Percentage Color": "Colore percentuale",
+      "Low Color": "Colore basso",
+      "Medium Color": "Colore medio",
+      "High Color": "Colore alto",
+      "Background Color": "Colore sfondo",
+      "Widget Transparency": "Trasparenza widget"
     }
   },
   "ja": {
     "translation": {
       "Claude Code Usage": "Claude Code 使用状況",
-      "Refresh Interval": "更新間隔"
+      "Refresh Interval": "更新間隔",
+      "Widget Personalization": "ウィジェットのパーソナライズ",
+      "Threshold Color Coding": "しきい値カラーコーディング",
+      "Text Color": "テキストカラー",
+      "Block Color": "ブロックカラー",
+      "Percentage Color": "パーセントカラー",
+      "Low Color": "低カラー",
+      "Medium Color": "中カラー",
+      "High Color": "高カラー",
+      "Background Color": "背景色",
+      "Widget Transparency": "ウィジェットの透明度"
     }
   },
   "ko": {
     "translation": {
       "Claude Code Usage": "Claude Code 사용량",
-      "Refresh Interval": "새로 고침 간격"
+      "Refresh Interval": "새로 고침 간격",
+      "Widget Personalization": "위젯 개인 설정",
+      "Threshold Color Coding": "임계값 색상 코딩",
+      "Text Color": "텍스트 색상",
+      "Block Color": "블록 색상",
+      "Percentage Color": "백분율 색상",
+      "Low Color": "낮은 색상",
+      "Medium Color": "중간 색상",
+      "High Color": "높은 색상",
+      "Background Color": "배경색",
+      "Widget Transparency": "위젯 투명도"
     }
   },
   "pt": {
     "translation": {
       "Claude Code Usage": "Uso do Claude Code",
-      "Refresh Interval": "Intervalo de atualização"
+      "Refresh Interval": "Intervalo de atualização",
+      "Widget Personalization": "Personalização do widget",
+      "Threshold Color Coding": "Codificação de cor por limite",
+      "Text Color": "Cor do texto",
+      "Block Color": "Cor do bloco",
+      "Percentage Color": "Cor da percentagem",
+      "Low Color": "Cor baixa",
+      "Medium Color": "Cor média",
+      "High Color": "Cor alta",
+      "Background Color": "Cor de fundo",
+      "Widget Transparency": "Transparência do widget"
     }
   },
   "ru": {
     "translation": {
       "Claude Code Usage": "Использование Claude Code",
-      "Refresh Interval": "Интервал обновления"
+      "Refresh Interval": "Интервал обновления",
+      "Widget Personalization": "Персонализация виджета",
+      "Threshold Color Coding": "Цветовое кодирование порогов",
+      "Text Color": "Цвет текста",
+      "Block Color": "Цвет блоков",
+      "Percentage Color": "Цвет процентов",
+      "Low Color": "Цвет низкого уровня",
+      "Medium Color": "Цвет среднего уровня",
+      "High Color": "Цвет высокого уровня",
+      "Background Color": "Цвет фона",
+      "Widget Transparency": "Прозрачность виджета"
     }
   },
   "zh_CN": {
     "translation": {
       "Claude Code Usage": "Claude Code 用量",
-      "Refresh Interval": "刷新间隔"
+      "Refresh Interval": "刷新间隔",
+      "Widget Personalization": "小部件个性化",
+      "Threshold Color Coding": "阈值颜色编码",
+      "Text Color": "文字颜色",
+      "Block Color": "块颜色",
+      "Percentage Color": "百分比颜色",
+      "Low Color": "低颜色",
+      "Medium Color": "中颜色",
+      "High Color": "高颜色",
+      "Background Color": "背景颜色",
+      "Widget Transparency": "小部件透明度"
     }
   },
   "zh_TW": {
     "translation": {
       "Claude Code Usage": "Claude Code 用量",
-      "Refresh Interval": "更新間隔"
+      "Refresh Interval": "更新間隔",
+      "Widget Personalization": "小工具個人化",
+      "Threshold Color Coding": "閾值色彩編碼",
+      "Text Color": "文字顏色",
+      "Block Color": "區塊顏色",
+      "Percentage Color": "百分比顏色",
+      "Low Color": "低色彩",
+      "Medium Color": "中色彩",
+      "High Color": "高色彩",
+      "Background Color": "背景顏色",
+      "Widget Transparency": "小工具透明度"
     }
   },
   "uk": {
     "translation": {
       "Claude Code Usage": "Використання Claude Code",
-      "Refresh Interval": "Інтервал оновлення"
+      "Refresh Interval": "Інтервал оновлення",
+      "Widget Personalization": "Персоналізація віджета",
+      "Threshold Color Coding": "Колірне кодування порогів",
+      "Text Color": "Колір тексту",
+      "Block Color": "Колір блоків",
+      "Percentage Color": "Колір відсотків",
+      "Low Color": "Колір низького рівня",
+      "Medium Color": "Колір середнього рівня",
+      "High Color": "Колір високого рівня",
+      "Background Color": "Колір фону",
+      "Widget Transparency": "Прозорість віджета"
     }
   },
   "en_FAKE": {

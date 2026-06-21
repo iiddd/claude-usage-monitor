@@ -26,6 +26,9 @@ internal sealed class CredentialWatcherService : BackgroundService
         _store = store;
         _options = options;
         _logger = logger;
+        // Make Windows OEM code pages (e.g. CP866 used by cmd.exe on Russian locale)
+        // available via Encoding.GetEncoding() on .NET 5+.
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -187,72 +190,114 @@ internal sealed class CredentialWatcherService : BackgroundService
             return false;
         }
 
-        // Reset warning flag so it fires again if the path is later removed.
         _cliPathWarningLogged = false;
 
         try
         {
             _logger.LogInformation("Invoking claude CLI to trigger OAuth token refresh");
 
-            // Send a minimal prompt so the CLI makes a real API call and refreshes the token.
-            // Keep args minimal: extra flags like --effort/--no-session-persistence may not be
-            // recognised by all CLI versions and cause an immediate non-zero exit.
+            // Minimal prompt: causes the CLI to make a real API call which refreshes the token.
             const string refreshArgs = "-p \"hi\"";
 
-            // .cmd files cannot be launched directly as a process target;
-            // they must be invoked via cmd.exe /c.
             var isCmdFile = cliPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
                          || cliPath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
 
-            var psi = isCmdFile
-                ? new ProcessStartInfo
+            string fileName;
+            string arguments;
+
+            if (isCmdFile)
+            {
+                // Prefer the inner claude.exe to avoid batch-file invocation issues entirely.
+                // claude.cmd lives in <npm-bin-dir>\ and delegates to:
+                //   <npm-bin-dir>\node_modules\@anthropic-ai\claude-code\bin\claude.exe
+                var cmdDir = Path.GetDirectoryName(cliPath) ?? string.Empty;
+                var innerExePath = Path.Combine(
+                    cmdDir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+
+                if (File.Exists(innerExePath))
                 {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c \"{cliPath}\" {refreshArgs}",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
+                    fileName  = innerExePath;
+                    arguments = refreshArgs;
+                    _logger.LogInformation("Using inner claude.exe directly: {Path}", innerExePath);
                 }
-                : new ProcessStartInfo
+                else
                 {
-                    FileName = cliPath,
-                    Arguments = refreshArgs,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                };
+                    // Fallback: invoke via cmd.exe /c.
+                    // cmd.exe /c quoting rule: when the command path is quoted, the entire
+                    // "command + args" string must be wrapped in an additional outer pair of
+                    // quotes: cmd.exe /c ""path\file.cmd" arg1 arg2"
+                    var systemRoot = Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows";
+                    fileName  = Path.Combine(systemRoot, "System32", "cmd.exe");
+                    arguments = $"/c \"\"{cliPath}\" {refreshArgs}\"";
+                    _logger.LogInformation(
+                        "Inner claude.exe not found at {InnerPath}; falling back to cmd.exe /c wrapper",
+                        innerExePath);
+                }
+            }
+            else
+            {
+                fileName  = cliPath;
+                arguments = refreshArgs;
+            }
+
+            // cmd.exe emits error messages in the OEM codepage (CP866 on Russian-locale
+            // Windows). RegisterProvider was called in the constructor; GetEncoding(866)
+            // should succeed. If it still throws (unexpected), fall back to UTF-8.
+            System.Text.Encoding oemEncoding;
+            try { oemEncoding = System.Text.Encoding.GetEncoding(866); }
+            catch { oemEncoding = System.Text.Encoding.UTF8; }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName               = fileName,
+                Arguments              = arguments,
+                UseShellExecute        = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding  = oemEncoding,
+                CreateNoWindow         = true,
+            };
 
             // When the service runs as LocalSystem, USERPROFILE/APPDATA point to the system
-            // account's profile and node may not be on PATH. Override them with the actual
-            // user's directories derived from the credentials file path so the CLI can find
-            // both node.js (via the npm bin dir) and the OAuth credentials it needs to call
-            // the API and trigger a token refresh.
+            // account's profile. Override them so the CLI finds credentials and npm binaries.
             var credPath = _options.CurrentValue.ResolvedCredentialsPath;
             var claudeDir = Path.GetDirectoryName(credPath) ?? string.Empty;
-            var userHome = Path.GetDirectoryName(claudeDir) ?? string.Empty;
+            var userHome  = Path.GetDirectoryName(claudeDir) ?? string.Empty;
 
             if (!string.IsNullOrEmpty(userHome))
             {
-                psi.Environment["USERPROFILE"] = userHome;
-                psi.Environment["HOME"] = userHome;
-                psi.Environment["APPDATA"] = Path.Combine(userHome, "AppData", "Roaming");
-                psi.Environment["LOCALAPPDATA"] = Path.Combine(userHome, "AppData", "Local");
+                var appData      = Path.Combine(userHome, "AppData", "Roaming");
+                var localAppData = Path.Combine(userHome, "AppData", "Local");
 
-                // Prepend the user's npm bin dir so node/claude are resolvable even when the
-                // service account's PATH doesn't include them.
-                var npmBin = Path.Combine(userHome, "AppData", "Roaming", "npm");
+                psi.Environment["USERPROFILE"]  = userHome;
+                psi.Environment["HOME"]         = userHome;
+                psi.Environment["HOMEDRIVE"]    = Path.GetPathRoot(userHome)?.TrimEnd('\\') ?? string.Empty;
+                psi.Environment["HOMEPATH"]     = userHome.Contains('\\')
+                    ? userHome[userHome.IndexOf('\\')..]
+                    : userHome;
+                psi.Environment["APPDATA"]      = appData;
+                psi.Environment["LOCALAPPDATA"] = localAppData;
+
+                var npmBin      = Path.Combine(appData, "npm");
                 var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
                 if (!currentPath.Contains(npmBin, StringComparison.OrdinalIgnoreCase))
                     psi.Environment["PATH"] = npmBin + ";" + currentPath;
+
+                _logger.LogInformation(
+                    "Child process env override — USERPROFILE={UserProfile} APPDATA={AppData} LOCALAPPDATA={LocalAppData}",
+                    userHome, appData, localAppData);
             }
+
+            // Log the exact invocation shape before launch so the next error is diagnosable.
+            _logger.LogInformation(
+                "Process start: FileName={FileName} Arguments={Arguments} UseShellExecute={UseShellExecute} WorkingDirectory={WorkingDirectory}",
+                psi.FileName, psi.Arguments, psi.UseShellExecute, psi.WorkingDirectory);
 
             using var process = new Process { StartInfo = psi };
             process.Start();
 
-            // Drain stdout and stderr concurrently with WaitForExitAsync to prevent
-            // the pipe buffer from filling and blocking the child process.
+            // Drain stdout/stderr concurrently with WaitForExitAsync to avoid pipe-buffer deadlock.
             var outTask = process.StandardOutput.ReadToEndAsync(stoppingToken);
             var errTask = process.StandardError.ReadToEndAsync(stoppingToken);
             await process.WaitForExitAsync(stoppingToken);

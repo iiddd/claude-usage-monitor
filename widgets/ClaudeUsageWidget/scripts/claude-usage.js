@@ -5,11 +5,48 @@
 (function (global) {
     'use strict';
 
-    function getColor(utilization) {
-        if (utilization < 0.6) return '#10B981';
-        if (utilization < 0.8) return '#F59E0B';
-        return '#EF4444';
+    // Active rendering config. All values are always concrete — defaults match the CSS theme.
+    var _cfg = {
+        thresholdColorCoding: true,
+        textColor:       '#FFFFFF',
+        blockColor:      '#3B82F6',
+        percentageColor: '#FFFFFF',
+        colorLow:        '#10B981',
+        colorMid:        '#F59E0B',
+        colorHigh:       '#EF4444',
+        backgroundColor: '#161616',
+        transparency:    0
+    };
+
+    // Last successfully rendered data — re-applied when config changes mid-session.
+    var _lastData = null;
+
+    // ── Color helpers ──────────────────────────────────────────────────
+
+    function thresholdColor(utilization) {
+        if (utilization < 0.6) return _cfg.colorLow;
+        if (utilization < 0.8) return _cfg.colorMid;
+        return _cfg.colorHigh;
     }
+
+    function resolveBlockColor(utilization) {
+        return _cfg.thresholdColorCoding ? thresholdColor(utilization) : _cfg.blockColor;
+    }
+
+    function resolvePctColor(utilization) {
+        return _cfg.thresholdColorCoding ? thresholdColor(utilization) : _cfg.percentageColor;
+    }
+
+    // ── Theme CSS variable application ─────────────────────────────────
+
+    function applyThemeVars() {
+        var root = document.documentElement;
+        root.style.setProperty('--bg-color',      _cfg.backgroundColor);
+        root.style.setProperty('--widget-opacity', String(1 - _cfg.transparency / 100));
+        root.style.setProperty('--text-color',     _cfg.textColor);
+    }
+
+    // ── Time formatting ────────────────────────────────────────────────
 
     function formatTimeUntil(resetsAt) {
         var diffMs = new Date(resetsAt).getTime() - Date.now();
@@ -26,6 +63,8 @@
         if (totalHours >= 1) return totalHours + 'h ' + minutes + 'm';
         return totalMinutes + 'm';
     }
+
+    // ── Block rendering ────────────────────────────────────────────────
 
     /* Returns a stable string key describing a block's visual state. */
     function blockKey(i, threshold, color) {
@@ -62,6 +101,7 @@
      * - First render is instant (no animation).
      * - Changed blocks: fade out (instant), swap background, fade in 400ms.
      * - Single forced reflow per bar batches all block updates.
+     * - configure() clears prevUtil so a color-scheme change forces a full re-render.
      */
     function applyBlocks(barEl, utilization) {
         ensureBlocks(barEl);
@@ -73,35 +113,31 @@
         if (!isFirst && Math.abs(prevUtil - utilization) < 0.00001) return;
         barEl.dataset.prevUtil = String(utilization);
 
-        var color      = getColor(utilization);
+        var color      = resolveBlockColor(utilization);
         var threshold  = utilization * 10;
-        var prevColor  = isFirst ? null : getColor(prevUtil);
+        // prevColor uses current _cfg — safe because configure() clears prevUtil,
+        // making isFirst=true after any color scheme change.
+        var prevColor  = isFirst ? null : resolveBlockColor(prevUtil);
         var prevThresh = isFirst ? NaN  : prevUtil * 10;
-        var isCrit     = utilization >= 0.9;
 
         var blocks    = barEl.querySelectorAll('.block');
         var toAnimate = [];
 
         blocks.forEach(function (block, i) {
-            var newKey   = blockKey(i, threshold, color);
-            var newPulse = isCrit && (i < Math.floor(threshold));
+            var newKey = blockKey(i, threshold, color);
 
             if (isFirst) {
                 block.style.background = blockBg(newKey);
-                block.classList.toggle('block-pulse', newPulse);
                 return;
             }
 
-            var oldKey   = blockKey(i, prevThresh, prevColor);
-            var wasPulse = (prevUtil >= 0.9) && (i < Math.floor(prevThresh));
+            var oldKey = blockKey(i, prevThresh, prevColor);
 
-            if (newKey === oldKey && newPulse === wasPulse) return;
+            if (newKey === oldKey) return;
 
-            block.classList.remove('block-pulse');
             block.style.transition = 'none';
             block.style.opacity    = '0';
             block.style.background = blockBg(newKey);
-            block._newPulse = newPulse;
             toAnimate.push(block);
         });
 
@@ -113,11 +149,10 @@
         toAnimate.forEach(function (b) {
             b.style.transition = 'opacity 400ms ease-in-out';
             b.style.opacity    = '1';
-            var np = b._newPulse;
-            delete b._newPulse;
-            if (np) setTimeout(function () { b.classList.add('block-pulse'); }, 400);
         });
     }
+
+    // ── Row rendering ──────────────────────────────────────────────────
 
     function renderRow(barId, pctId, resetId, utilization, resetsAt) {
         var barEl   = document.getElementById(barId);
@@ -127,14 +162,41 @@
 
         applyBlocks(barEl, utilization);
 
-        /* Text: instant update, no animation. */
-        var color = getColor(utilization);
         pctEl.textContent = Math.round(utilization * 100) + '%';
-        pctEl.style.color = color;
+        pctEl.style.color = resolvePctColor(utilization);
         resetEl.textContent = formatTimeUntil(resetsAt);
     }
 
+    // ── Public API ─────────────────────────────────────────────────────
+
+    /*
+     * Apply a new rendering config. Only keys present in opts are updated.
+     * Clears block caches and immediately re-renders if data is available,
+     * so color scheme changes take effect without waiting for the next poll.
+     */
+    function configure(opts) {
+        var k;
+        for (k in opts) {
+            if (Object.prototype.hasOwnProperty.call(opts, k) && k in _cfg) {
+                _cfg[k] = opts[k];
+            }
+        }
+
+        applyThemeVars();
+
+        // Clearing prevUtil forces applyBlocks to treat the next render as "first"
+        // so it re-computes block colors against the new _cfg.
+        var bars = document.querySelectorAll('.block-bar');
+        for (var i = 0; i < bars.length; i++) {
+            bars[i].dataset.prevUtil = '';
+        }
+
+        if (_lastData) renderData(_lastData);
+    }
+
     function renderData(data) {
+        _lastData = data;
+
         var errorOverlay   = document.getElementById('error-overlay');
         var loadingOverlay = document.getElementById('loading-overlay');
         if (errorOverlay)   errorOverlay.style.display   = 'none';
@@ -183,6 +245,7 @@
     }
 
     global.ClaudeUsage = {
+        configure:         configure,
         renderData:        renderData,
         renderError:       renderError,
         renderLoading:     renderLoading,
