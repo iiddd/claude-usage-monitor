@@ -1,5 +1,6 @@
-using System.Diagnostics;
+using System.Security.AccessControl;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using ClaudeUsageServer.Models;
 using Microsoft.Extensions.Options;
@@ -8,27 +9,42 @@ namespace ClaudeUsageServer.Services;
 
 internal sealed class CredentialWatcherService : BackgroundService
 {
+    // Public OAuth client id the Claude Code CLI itself uses for its token grants.
+    private const string ClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+
+    // The CLI tries the platform host first and falls back to the legacy console host.
+    private static readonly string[] TokenEndpoints =
+    {
+        "https://platform.claude.com/v1/oauth/token",
+        "https://console.anthropic.com/v1/oauth/token",
+    };
+
     private readonly CredentialStore _store;
     private readonly IOptionsMonitor<ServerOptions> _options;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<CredentialWatcherService> _logger;
     private FileSystemWatcher? _watcher;
-    private bool _cliPathWarningLogged;
+    private bool _reauthWarningLogged;
+
+    // FSW change events fired within this window of our own write are our own echo; ignore them.
+    private long _suppressReloadUntilTicks;
 
     // Capacity-1 channel: multiple rapid FSW events collapse into one reload signal.
     private readonly Channel<bool> _reloadSignal = Channel.CreateBounded<bool>(
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest });
 
+    private enum RefreshResult { Success, InvalidGrant, TransientFailure }
+
     public CredentialWatcherService(
         CredentialStore store,
         IOptionsMonitor<ServerOptions> options,
+        IHttpClientFactory httpFactory,
         ILogger<CredentialWatcherService> logger)
     {
         _store = store;
         _options = options;
+        _httpFactory = httpFactory;
         _logger = logger;
-        // Make Windows OEM code pages (e.g. CP866 used by cmd.exe on Russian locale)
-        // available via Encoding.GetEncoding() on .NET 5+.
-        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -40,6 +56,15 @@ internal sealed class CredentialWatcherService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Reauth required: the refresh token is dead. Retrying the grant cannot help —
+            // only a fresh `claude login` can, which arrives as a file change. Park here.
+            if (_store.ReauthRequired)
+            {
+                try { await _reloadSignal.Reader.ReadAsync(stoppingToken); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
+
             var timeUntilRefresh = _store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes);
 
             if (timeUntilRefresh > TimeSpan.Zero)
@@ -92,7 +117,8 @@ internal sealed class CredentialWatcherService : BackgroundService
             }
 
             var expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(oauth.ExpiresAt);
-            _store.Update(oauth.AccessToken, expiresAt);
+            _store.Update(oauth.AccessToken, oauth.RefreshToken, expiresAt);
+            _reauthWarningLogged = false;
             _logger.LogInformation("Credentials loaded, token expires at {ExpiresAt:O}", expiresAt);
         }
         catch (FileNotFoundException)
@@ -140,19 +166,38 @@ internal sealed class CredentialWatcherService : BackgroundService
             if (_store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero)
                 return;
 
-            bool cliOk = await TryRunClaudeCliAsync(stoppingToken);
-            if (cliOk)
+            _store.SetRefreshing(true);
+            RefreshResult result;
+            try
             {
-                await TryLoadCredentialsAsync();
-                if (_store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero)
+                result = await RefreshAccessTokenAsync(stoppingToken);
+            }
+            finally
+            {
+                _store.SetRefreshing(false);
+            }
+
+            if (result == RefreshResult.Success)
+            {
+                _logger.LogInformation("Token refresh succeeded");
+                return;
+            }
+
+            if (result == RefreshResult.InvalidGrant)
+            {
+                _store.MarkReauthRequired();
+                if (!_reauthWarningLogged)
                 {
-                    _logger.LogInformation("Token refresh succeeded");
-                    return;
+                    _reauthWarningLogged = true;
+                    _logger.LogWarning(
+                        "Refresh token is expired or revoked — re-authentication required. " +
+                        "Run `claude login` in a terminal to restore access.");
                 }
+                return; // Do not retry: the refresh token will not become valid by retrying.
             }
 
             _logger.LogWarning(
-                "Token refresh did not produce a valid credential, retrying in {Seconds}s",
+                "Token refresh failed (network/transient), retrying in {Seconds}s",
                 _options.CurrentValue.RetryIntervalSeconds);
 
             // Wait the retry interval; FSW can interrupt if it delivers a fresh token.
@@ -172,153 +217,187 @@ internal sealed class CredentialWatcherService : BackgroundService
         }
     }
 
-    private async Task<bool> TryRunClaudeCliAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Performs a direct OAuth <c>refresh_token</c> grant against the token endpoint (with a
+    /// legacy-host fallback). This consumes no Claude usage. On success the rotated tokens are
+    /// written back to the credentials file and loaded into the store.
+    /// </summary>
+    private async Task<RefreshResult> RefreshAccessTokenAsync(CancellationToken stoppingToken)
     {
-        var cliPath = _options.CurrentValue.ResolvedClaudeCliPath;
+        var http = _httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(30);
 
-        if (!File.Exists(cliPath))
+        RefreshResult aggregate = RefreshResult.TransientFailure;
+
+        for (int i = 0; i < TokenEndpoints.Length; i++)
         {
-            if (!_cliPathWarningLogged)
+            var endpoint = TokenEndpoints[i];
+
+            if (!_store.TryCreateRefreshContent(ClientId, out var content) || content is null)
             {
-                _cliPathWarningLogged = true;
-                _logger.LogWarning(
-                    "Claude CLI not found at expected path. " +
-                    "Set ClaudeUsageServer:ClaudeCliPath in appsettings.json to the full path " +
-                    "of claude.cmd (run 'Get-Command claude' in PowerShell to find it). " +
-                    "Token refresh will not work until this is resolved.");
+                // No refresh token on hand — a fresh login is the only path forward.
+                return RefreshResult.InvalidGrant;
             }
-            return false;
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+
+            try
+            {
+                _logger.LogInformation("Requesting OAuth token refresh (endpoint {Index})", i + 1);
+
+                using var response = await http.SendAsync(request, stoppingToken);
+                var body = await response.Content.ReadAsStringAsync(stoppingToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    TokenRefreshResponse? parsed;
+                    try { parsed = JsonSerializer.Deserialize<TokenRefreshResponse>(body); }
+                    catch { parsed = null; }
+
+                    if (string.IsNullOrEmpty(parsed?.AccessToken))
+                    {
+                        _logger.LogWarning("Refresh response contained no access token");
+                        aggregate = RefreshResult.TransientFailure;
+                        continue;
+                    }
+
+                    var expiresAt = DateTimeOffset.UtcNow.AddSeconds(
+                        parsed.ExpiresIn > 0 ? parsed.ExpiresIn : 28800);
+
+                    // Rotation: prefer the new refresh token, keep the old one if none returned.
+                    _store.UpdateFromRefresh(parsed.AccessToken, parsed.RefreshToken, expiresAt);
+
+                    await WriteCredentialsFileAsync(
+                        parsed.AccessToken, parsed.RefreshToken, expiresAt.ToUnixTimeMilliseconds());
+
+                    return RefreshResult.Success;
+                }
+
+                // 4xx → client-side failure (invalid/revoked grant). Retrying will not help.
+                if ((int)response.StatusCode is >= 400 and < 500)
+                {
+                    var code = TryReadErrorCode(body);
+                    _logger.LogWarning(
+                        "Refresh grant rejected with HTTP {StatusCode}{Error}",
+                        (int)response.StatusCode,
+                        code is null ? string.Empty : " (" + code + ")");
+                    return RefreshResult.InvalidGrant;
+                }
+
+                // 5xx → server-side transient; try the fallback host, else retry later.
+                _logger.LogWarning("Refresh endpoint returned HTTP {StatusCode}", (int)response.StatusCode);
+                aggregate = RefreshResult.TransientFailure;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Network error contacting refresh endpoint: {Reason}", ex.Message);
+                aggregate = RefreshResult.TransientFailure;
+            }
         }
 
-        _cliPathWarningLogged = false;
+        return aggregate;
+    }
+
+    // Reads only the machine-readable error code; never logs the raw body (may echo a token).
+    private static string? TryReadErrorCode(string body)
+    {
+        try
+        {
+            var doc = JsonSerializer.Deserialize<TokenRefreshResponse>(body);
+            return string.IsNullOrEmpty(doc?.Error) ? null : doc!.Error;
+        }
+        catch { return null; }
+    }
+
+    // ── Credentials file write-back (atomic, permission-preserving) ─────────
+
+    /// <summary>
+    /// Writes the refreshed tokens back into the credentials file in the exact structure
+    /// Claude Code expects, preserving every field the service does not manage. Uses a
+    /// temp-file + rename to avoid a torn write, and copies the original file's ACL onto
+    /// the replacement so restrictive permissions survive.
+    /// </summary>
+    private async Task WriteCredentialsFileAsync(
+        string accessToken, string? refreshToken, long expiresAtMs)
+    {
+        var path = _options.CurrentValue.ResolvedCredentialsPath;
+        var dir = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(dir))
+        {
+            _logger.LogWarning("Cannot resolve credentials directory; skipping write-back");
+            return;
+        }
 
         try
         {
-            _logger.LogInformation("Invoking claude CLI to trigger OAuth token refresh");
-
-            // Minimal prompt: causes the CLI to make a real API call which refreshes the token.
-            const string refreshArgs = "-p \"hi\"";
-
-            var isCmdFile = cliPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
-                         || cliPath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
-
-            string fileName;
-            string arguments;
-
-            if (isCmdFile)
+            // Load the existing document so unmanaged fields (refreshTokenExpiresAt, scopes,
+            // subscriptionType, rateLimitTier, …) round-trip untouched.
+            JsonObject root;
+            if (File.Exists(path))
             {
-                // Prefer the inner claude.exe to avoid batch-file invocation issues entirely.
-                // claude.cmd lives in <npm-bin-dir>\ and delegates to:
-                //   <npm-bin-dir>\node_modules\@anthropic-ai\claude-code\bin\claude.exe
-                var cmdDir = Path.GetDirectoryName(cliPath) ?? string.Empty;
-                var innerExePath = Path.Combine(
-                    cmdDir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
-
-                if (File.Exists(innerExePath))
-                {
-                    fileName  = innerExePath;
-                    arguments = refreshArgs;
-                    _logger.LogInformation("Using inner claude.exe directly: {Path}", innerExePath);
-                }
-                else
-                {
-                    // Fallback: invoke via cmd.exe /c.
-                    // cmd.exe /c quoting rule: when the command path is quoted, the entire
-                    // "command + args" string must be wrapped in an additional outer pair of
-                    // quotes: cmd.exe /c ""path\file.cmd" arg1 arg2"
-                    var systemRoot = Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows";
-                    fileName  = Path.Combine(systemRoot, "System32", "cmd.exe");
-                    arguments = $"/c \"\"{cliPath}\" {refreshArgs}\"";
-                    _logger.LogInformation(
-                        "Inner claude.exe not found at {InnerPath}; falling back to cmd.exe /c wrapper",
-                        innerExePath);
-                }
+                var existing = await File.ReadAllTextAsync(path);
+                root = JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
             }
             else
             {
-                fileName  = cliPath;
-                arguments = refreshArgs;
+                root = new JsonObject();
             }
 
-            // cmd.exe emits error messages in the OEM codepage (CP866 on Russian-locale
-            // Windows). RegisterProvider was called in the constructor; GetEncoding(866)
-            // should succeed. If it still throws (unexpected), fall back to UTF-8.
-            System.Text.Encoding oemEncoding;
-            try { oemEncoding = System.Text.Encoding.GetEncoding(866); }
-            catch { oemEncoding = System.Text.Encoding.UTF8; }
-
-            var psi = new ProcessStartInfo
+            if (root["claudeAiOauth"] is not JsonObject oauth)
             {
-                FileName               = fileName,
-                Arguments              = arguments,
-                UseShellExecute        = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError  = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding  = oemEncoding,
-                CreateNoWindow         = true,
-            };
-
-            // When the service runs as LocalSystem, USERPROFILE/APPDATA point to the system
-            // account's profile. Override them so the CLI finds credentials and npm binaries.
-            var credPath = _options.CurrentValue.ResolvedCredentialsPath;
-            var claudeDir = Path.GetDirectoryName(credPath) ?? string.Empty;
-            var userHome  = Path.GetDirectoryName(claudeDir) ?? string.Empty;
-
-            if (!string.IsNullOrEmpty(userHome))
-            {
-                var appData      = Path.Combine(userHome, "AppData", "Roaming");
-                var localAppData = Path.Combine(userHome, "AppData", "Local");
-
-                psi.Environment["USERPROFILE"]  = userHome;
-                psi.Environment["HOME"]         = userHome;
-                psi.Environment["HOMEDRIVE"]    = Path.GetPathRoot(userHome)?.TrimEnd('\\') ?? string.Empty;
-                psi.Environment["HOMEPATH"]     = userHome.Contains('\\')
-                    ? userHome[userHome.IndexOf('\\')..]
-                    : userHome;
-                psi.Environment["APPDATA"]      = appData;
-                psi.Environment["LOCALAPPDATA"] = localAppData;
-
-                var npmBin      = Path.Combine(appData, "npm");
-                var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-                if (!currentPath.Contains(npmBin, StringComparison.OrdinalIgnoreCase))
-                    psi.Environment["PATH"] = npmBin + ";" + currentPath;
-
-                _logger.LogInformation(
-                    "Child process env override — USERPROFILE={UserProfile} APPDATA={AppData} LOCALAPPDATA={LocalAppData}",
-                    userHome, appData, localAppData);
+                oauth = new JsonObject();
+                root["claudeAiOauth"] = oauth;
             }
 
-            // Log the exact invocation shape before launch so the next error is diagnosable.
-            _logger.LogInformation(
-                "Process start: FileName={FileName} Arguments={Arguments} UseShellExecute={UseShellExecute} WorkingDirectory={WorkingDirectory}",
-                psi.FileName, psi.Arguments, psi.UseShellExecute, psi.WorkingDirectory);
+            oauth["accessToken"] = accessToken;
+            if (!string.IsNullOrEmpty(refreshToken)) oauth["refreshToken"] = refreshToken;
+            oauth["expiresAt"] = expiresAtMs;
 
-            using var process = new Process { StartInfo = psi };
-            process.Start();
+            var serialized = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
 
-            // Drain stdout/stderr concurrently with WaitForExitAsync to avoid pipe-buffer deadlock.
-            var outTask = process.StandardOutput.ReadToEndAsync(stoppingToken);
-            var errTask = process.StandardError.ReadToEndAsync(stoppingToken);
-            await process.WaitForExitAsync(stoppingToken);
-            await Task.WhenAll(outTask, errTask);
+            // Mark our own imminent write so the FSW echo is ignored.
+            Interlocked.Exchange(
+                ref _suppressReloadUntilTicks,
+                DateTimeOffset.UtcNow.AddSeconds(2).UtcTicks);
 
-            if (process.ExitCode != 0)
-            {
-                var stderr = errTask.Result.Trim();
-                _logger.LogWarning(
-                    "Claude CLI exited with code {ExitCode}{Stderr}",
-                    process.ExitCode,
-                    string.IsNullOrEmpty(stderr) ? string.Empty : ": " + stderr);
-            }
+            var tmp = path + ".tmp";
+            await File.WriteAllTextAsync(tmp, serialized);
+            CopyAclIfPresent(path, tmp);
 
-            return process.ExitCode == 0;
+            // Atomic replace (same volume). Overwrite in case a stale temp exists.
+            File.Move(tmp, path, overwrite: true);
+
+            _logger.LogInformation("Credentials file updated with refreshed token");
         }
-        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _logger.LogError("claude CLI invocation failed: {Reason}", ex.Message);
-            return false;
+            // In-memory tokens are already updated, so the widget keeps working this session;
+            // Claude Code may need to refresh again on its own if the on-disk copy is stale.
+            _logger.LogError("Failed to write refreshed credentials to disk: {Reason}", ex.Message);
+        }
+    }
+
+    // Copies owner + DACL from the original file onto the replacement so restrictive
+    // permissions are preserved. Best-effort: never fails the write.
+    private void CopyAclIfPresent(string sourcePath, string targetPath)
+    {
+        if (!OperatingSystem.IsWindows() || !File.Exists(sourcePath)) return;
+        try
+        {
+            var src = new FileInfo(sourcePath).GetAccessControl();
+            var security = new FileSecurity();
+            security.SetSecurityDescriptorSddlForm(
+                src.GetSecurityDescriptorSddlForm(
+                    AccessControlSections.Access | AccessControlSections.Owner));
+            new FileInfo(targetPath).SetAccessControl(security);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("Could not copy credentials file ACL: {Reason}", ex.Message);
         }
     }
 
@@ -354,6 +433,12 @@ internal sealed class CredentialWatcherService : BackgroundService
         {
             // Debounce: the file may still be mid-write.
             await Task.Delay(500);
+
+            // Ignore the echo of our own atomic write-back.
+            var suppressUntil = Interlocked.Read(ref _suppressReloadUntilTicks);
+            if (DateTimeOffset.UtcNow.UtcTicks < suppressUntil)
+                return;
+
             await TryLoadCredentialsAsync();
             _reloadSignal.Writer.TryWrite(true);
         });

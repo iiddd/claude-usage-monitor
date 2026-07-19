@@ -209,13 +209,28 @@
             data.seven_day.utilization / 100, data.seven_day.resets_at);
     }
 
+    // Maps a known server error code to a distinct, actionable overlay.
+    // reauth_required gets its own "Login required" message; everything else
+    // falls back to the generic error title with the raw reason underneath.
+    var ERROR_STATES = {
+        reauth_required: {
+            title:  'Login required',
+            reason: 'run `claude login` in a terminal'
+        }
+    };
+
     function renderError(message) {
         var errorOverlay   = document.getElementById('error-overlay');
         var loadingOverlay = document.getElementById('loading-overlay');
+        var title          = document.getElementById('error-title');
         var reason         = document.getElementById('error-reason');
+
+        var mapped = ERROR_STATES[message];
+
         if (loadingOverlay) loadingOverlay.style.display = 'none';
-        if (reason)         reason.textContent           = message || '';
-        if (errorOverlay)   errorOverlay.style.display   = 'flex';
+        if (title)  title.textContent  = mapped ? mapped.title  : 'Unable to fetch usage';
+        if (reason) reason.textContent = mapped ? mapped.reason : (message || '');
+        if (errorOverlay) errorOverlay.style.display = 'flex';
     }
 
     function renderLoading() {

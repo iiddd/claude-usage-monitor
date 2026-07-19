@@ -12,13 +12,13 @@ Target platform: Windows 11, Corsair XENEON EDGE S horizontal slot (840×344 px)
 
 An ASP.NET Core Minimal API running as a Windows Service (`net8.0-windows`, `Microsoft.NET.Sdk.Web`). It has three responsibilities:
 
-1. **Credential management** — reads `~/.claude/.credentials.json` on startup, watches the file for external changes via `FileSystemWatcher`, and schedules a proactive token refresh (by invoking `claude --version`) 5 minutes before the token expires. The token is stored only in memory inside a `sealed` `CredentialStore` class; it is never logged, never returned in any HTTP response, and injected into outgoing requests via `TryApplyToken(HttpRequestMessage)` to avoid appearing in stack traces.
+1. **Credential management** — reads `~/.claude/.credentials.json` on startup, watches the file for external changes via `FileSystemWatcher`, and schedules a proactive token refresh 5 minutes before the token expires via a direct OAuth `refresh_token` grant (same mechanism the Claude CLI uses; consumes no usage). The rotated tokens are written back to the credentials file atomically (temp-file + rename), preserving unmanaged fields; the self-triggered FSW event is de-duplicated. The access and refresh tokens are stored only in memory inside a `sealed` `CredentialStore` class; neither is ever logged or returned in any HTTP response — the access token is injected into outgoing requests via `TryApplyToken(HttpRequestMessage)`, and the refresh token only leaves the store already sealed inside the grant body built by `TryCreateRefreshContent`. If the refresh token itself is expired/revoked the service enters the `reauth_required` state until the user runs `claude login`.
 
 2. **Response caching** — `UsageCache` holds the last successful Anthropic response body in memory. `GET /usage` returns the cached body immediately if it is younger than `CacheTtlSeconds` (default 60 s). On Anthropic error or network failure the stale cache is returned with an `X-Cache-Stale: true` header. The cache is never written to disk; it is thread-safe via a simple `lock`.
 
 3. **HTTP proxy** — listens on `http://127.0.0.1:41920` (loopback only, asserted at startup). On cache miss, `GET /usage` forwards requests to `https://api.anthropic.com/api/oauth/usage` with the bearer token and the required `anthropic-beta` header added server-side. The widget sends **no credentials**. CORS headers are added manually per-endpoint so error responses also carry them.
 
-4. **Status reporting** — `GET /status` returns `{ tokenValid, expiresAt, lastRefresh }` so the widget can show a connection indicator. `GET /health` returns `ok` for readiness checks.
+4. **Status reporting** — `GET /status` returns `{ state, tokenValid, expiresAt, lastRefresh }` (`state` ∈ `ok` | `refreshing` | `reauth_required` | `error`) so the widget can show a connection indicator. `GET /health` returns `ok` for readiness checks.
 
 **Key source files:**
 - `Program.cs` — host setup, Kestrel config, endpoint definitions
@@ -39,7 +39,7 @@ An iCUE HTML widget targeting `dashboard_lcd` (Xeneon Edge). The widget is respo
 - Reading the refresh interval, background color, and transparency from iCUE user-configurable properties. **No access token is configured in the widget** — authentication is handled entirely by the service. The port (`41920`) is hardcoded and not exposed as a widget property.
 - Polling `http://localhost:41920/usage` and `http://localhost:41920/status` on the configured interval (no Authorization header). An `X-Cache-Stale: true` response header triggers an amber status dot.
 - Rendering two rows (5-hour window, 7-day window), each with a 10-segment block bar, a color-coded percentage, and a countdown to the next reset.
-- Showing a loading overlay on initial startup and an error overlay when the server is unreachable or returns an error (e.g. `credentials_not_found`, `token_expired`).
+- Showing a loading overlay on initial startup and an error overlay when the server is unreachable or returns an error (e.g. `credentials_not_found`, `token_expired`). A `reauth_required` error renders a distinct "Login required — run `claude login`" state.
 
 **Shared rendering module:** `scripts/claude-usage.js` exports a `ClaudeUsage` global with `renderData`, `renderError`, `renderLoading`, `renderStale`, `renderPlaceholder`, and `formatTimeUntil`. This module is used by both `index.html` (iCUE runtime) and `preview.html` (browser dev preview) — neither polling nor config resolution lives in this module.
 
@@ -65,11 +65,11 @@ An iCUE HTML widget targeting `dashboard_lcd` (Xeneon Edge). The widget is respo
 │  CredentialWatcherService                │
 │  • loads token into CredentialStore      │
 │  • reschedules refresh at expiresAt-5m   │
-│  • runs `claude --version` to refresh    │
+│  • direct OAuth refresh_token grant      │
 │  • retries every 60s on failure          │
 │                                          │
 │  GET /health  → "ok"                     │
-│  GET /status  → { tokenValid, expiresAt }│
+│  GET /status  → { state, tokenValid... } │
 │  GET /usage   → proxy to Anthropic       │
 │  OPTIONS /usage → CORS preflight         │
 └──────────────┬───────────────────────────┘
@@ -238,7 +238,7 @@ Fix any reported errors before packaging. The `icuewidget` CLI must be installed
 ## Known Constraints
 
 - **iCUE widget sandbox — no filesystem.** The widget cannot read credential files directly. All credential access is handled by the Windows Service, which runs outside the sandbox.
-- **Token refresh requires `claude` on PATH.** The refresh strategy calls `claude --version`. If the Claude CLI is not on the system PATH (e.g. the service runs as a different user), the refresh will fail and the service will log a warning and retry. Ensure the service account has `claude` accessible or configure a full path via a wrapper script.
+- **Refresh consumes no usage; re-auth is user-driven.** Refresh is a direct OAuth `refresh_token` grant (`POST https://platform.claude.com/v1/oauth/token`, fallback `https://console.anthropic.com/v1/oauth/token`), so it does not require `claude` on PATH and does not count against usage limits — it succeeds even at 100% utilization. If the refresh token is expired/revoked the grant returns a 4xx; the service stops retrying, logs one warning, and enters `reauth_required`. Only `claude login` (a new credentials file, picked up by the FSW) clears it — no service restart needed. Network/5xx failures are retried per `RetryIntervalSeconds`.
 - **Windows Event Log source must be pre-registered.** `Serilog.Sinks.EventLog` with `manageEventSource: false` will silently skip Event Log writes if the `ClaudeUsageServer` source does not exist. Run `New-EventLog -Source "ClaudeUsageServer" -LogName Application` once before starting the service.
 - **Port conflict.** If port 41920 is in use, Kestrel fails to bind and the service stops. Change `Port` in `appsettings.json` and update the widget's `serverPort` setting to match.
 - **Loopback only — enforced at startup.** The service asserts that Kestrel bound to `127.0.0.1` and will call `StopApplication()` if any other address is detected. Do not override the Kestrel binding via environment variables.

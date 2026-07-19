@@ -96,7 +96,7 @@
 		'    <div class="loading-subtitle">contacting localhost:41920</div>\n' +
 		'  </div>\n' +
 		'  <div class="error-overlay" id="error-overlay">\n' +
-		'    <div class="error-title">Unable to fetch usage</div>\n' +
+		'    <div class="error-title" id="error-title">Unable to fetch usage</div>\n' +
 		'    <div class="error-reason" id="error-reason"></div>\n' +
 		'  </div>\n' +
 		'</div>\n' +
@@ -143,6 +143,10 @@
 			{
 				label: 'Error state',
 				msg: { type: 'error', message: 'credentials_not_found' }
+			},
+			{
+				label: 'Re-auth required',
+				msg: { type: 'error', message: 'reauth_required' }
 			},
 			{
 				label: 'Loading state',

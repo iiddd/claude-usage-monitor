@@ -137,6 +137,8 @@ try
 
         // Cache miss — credentials must be valid to call upstream.
         var state = store.State;
+        if (state == CredentialState.ReauthRequired)
+            return Results.Json(new { error = "reauth_required" }, statusCode: 503);
         if (state == CredentialState.NotFound)
             return Results.Json(new { error = "credentials_not_found" }, statusCode: 503);
         if (state == CredentialState.Expired)

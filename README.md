@@ -123,33 +123,24 @@ The service is the only component that handles credentials. The widget calls `lo
 
 ### Token refresh
 
-On startup the service reads `~/.claude/.credentials.json` and schedules a proactive refresh at `expiresAt − 5 minutes`. At refresh time it runs a minimal Claude CLI call:
+On startup the service reads `~/.claude/.credentials.json` and schedules a proactive refresh at `expiresAt − 5 minutes`. At refresh time it performs a direct OAuth **`refresh_token` grant** — the same mechanism the Claude Code CLI uses internally:
 
 ```
-claude -p "hi" --model haiku --tools "" --no-session-persistence --effort low
+POST https://platform.claude.com/v1/oauth/token      (falls back to https://console.anthropic.com/v1/oauth/token)
+Content-Type: application/json
+
+{ "grant_type": "refresh_token", "refresh_token": "…", "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e" }
 ```
 
-This causes the Claude CLI to silently renew the OAuth token and write the updated credentials back to disk. The service detects the file change via `FileSystemWatcher` and loads the new token within ~500 ms.
+The response returns a new access token, a new expiry, and (via token rotation) usually a **new refresh token**. The service writes all of these back into `~/.claude/.credentials.json` in the exact structure Claude Code expects — preserving every field it does not manage (`refreshTokenExpiresAt`, `scopes`, `subscriptionType`, …) — using an atomic temp-file-plus-rename so the file can never be left torn. The self-triggered `FileSystemWatcher` event is de-duplicated so this write does not cause a redundant reload.
 
-> **Note:** `claude --version` does **not** refresh the OAuth token. Only actual API calls trigger a renewal.
+> **Consumes no usage.** Unlike an actual API call, the `refresh_token` grant does **not** count against your 5-hour or 7-day limits. This also means the token can still refresh when usage is at 100% — the exact moment the widget matters most.
 
-**Cost trade-off:** Each refresh makes a real Haiku API call. This counts against your Claude Code usage limits — one micro-request per ~26 hours. A direct OAuth `refresh_token` grant would avoid this, but that mechanism is not exposed via the Claude Code CLI.
+**Retry:** On a network or 5xx failure the service logs a warning and retries every 60 s (configurable). If Claude Code or another tool refreshes the token externally, the `FileSystemWatcher` picks up the change within ~500 ms.
 
-**Retry:** If the CLI call fails, the service logs a warning and retries every 60 s (configurable). If Claude Code or another tool refreshes the token externally, the `FileSystemWatcher` picks it up within ~500 ms.
+**Re-authentication required.** If the refresh token itself is expired or revoked (a long idle period, or a manual logout), the grant returns a client error. Retrying cannot help, so the service stops retrying, logs a single warning, and enters the **`reauth_required`** state — `/status` reports `"state": "reauth_required"`, `/usage` returns `503 {"error":"reauth_required"}`, and the widget shows a **“Login required — run `claude login` in a terminal”** message. Running `claude login` writes a fresh credentials file; the `FileSystemWatcher` picks it up and the service returns to normal automatically, **no restart needed**.
 
-**Running as LocalSystem:** When installed as a Windows Service the process runs as LocalSystem, which does not inherit your user's `PATH`. You must set `ClaudeCliPath` explicitly in `appsettings.json`:
-
-```json
-"ClaudeCliPath": "C:\\Users\\YourName\\AppData\\Roaming\\npm\\claude.cmd"
-```
-
-To find the correct path:
-
-```powershell
-(Get-Command claude).Source
-```
-
-The MSI installer sets this automatically from the installing user's environment. For manual installs, set it before starting the service.
+The service no longer invokes the Claude CLI for refresh, so it does not need `claude` on the service account's `PATH`.
 
 ---
 
@@ -162,7 +153,6 @@ Every value is also overridable via environment variable using the prefix `Claud
 |-----|---------|-------------|
 | `Port` | `41920` | TCP port Kestrel binds on (127.0.0.1 only) |
 | `CredentialsPath` | *(empty)* | Path to the credentials JSON. Empty = `%USERPROFILE%\.claude\.credentials.json` |
-| `ClaudeCliPath` | *(empty)* | Full path to `claude.cmd`. Empty = auto-derived. **Must be set explicitly when running as LocalSystem.** |
 | `RefreshBufferMinutes` | `5` | Minutes before token expiry to trigger a proactive refresh |
 | `RetryIntervalSeconds` | `60` | Wait between failed refresh retries |
 | `CacheTtlSeconds` | `60` | How long a successful Anthropic response is served from cache |
@@ -170,7 +160,7 @@ Every value is also overridable via environment variable using the prefix `Claud
 | `LogMaxFileSizeMB` | `10` | Max size of a single log file before rolling to a new one |
 | `LogMaxTotalSizeMB` | `100` | Safety-net cap on total log directory size |
 
-**Note:** `CredentialsPath` and `ClaudeCliPath` are never written to logs.
+**Note:** `CredentialsPath` is never written to logs.
 
 ---
 
@@ -179,7 +169,7 @@ Every value is also overridable via environment variable using the prefix `Claud
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Returns `ok`. Used for readiness checks. |
-| `GET` | `/status` | Returns `{ tokenValid, expiresAt, lastRefresh }`. No credential data. |
+| `GET` | `/status` | Returns `{ state, tokenValid, expiresAt, lastRefresh }` where `state` is `ok` \| `refreshing` \| `reauth_required` \| `error`. No credential data. |
 | `GET` | `/usage` | Proxies `https://api.anthropic.com/api/oauth/usage`. Returns usage JSON or a 503 error object. |
 | `OPTIONS` | `/usage` | CORS preflight — returns 200 with CORS headers. |
 
@@ -199,6 +189,7 @@ All endpoints are reachable only from `127.0.0.1`.
 | Condition | Status | Body |
 |-----------|--------|------|
 | Credentials file not found | 503 | `{"error":"credentials_not_found"}` |
+| Refresh token expired/revoked — login needed | 503 | `{"error":"reauth_required"}` |
 | Token expired, refresh pending | 503 | `{"error":"token_expired"}` |
 | Anthropic non-200, no cache | same as upstream | upstream body |
 | Anthropic error, stale cache | 200 + `X-Cache-Stale: true` | last cached body |
@@ -295,7 +286,6 @@ Check `%ProgramData%\ClaudeUsageServer\logs\`. The most common cause is the inst
 Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer" -Name Environment
 # Expected:
 # ClaudeUsageServer__CredentialsPath=C:\Users\YourName\.claude\.credentials.json
-# ClaudeUsageServer__ClaudeCliPath=C:\Users\YourName\AppData\Roaming\npm\claude.cmd
 ```
 
 To fix manually (run as Administrator):
@@ -303,8 +293,7 @@ To fix manually (run as Administrator):
 ```powershell
 $svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer"
 Set-ItemProperty $svcKey -Name Environment -Type MultiString -Value @(
-    "ClaudeUsageServer__CredentialsPath=$env:USERPROFILE\.claude\.credentials.json",
-    "ClaudeUsageServer__ClaudeCliPath=$env:APPDATA\npm\claude.cmd"
+    "ClaudeUsageServer__CredentialsPath=$env:USERPROFILE\.claude\.credentials.json"
 )
 sc.exe stop ClaudeUsageServer
 sc.exe start ClaudeUsageServer

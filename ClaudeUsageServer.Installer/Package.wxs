@@ -187,13 +187,13 @@
                      Type="integer"
                      Value="1"
                      KeyPath="yes" />
-      <!-- Two KEY=VALUE pairs injected by the SCM into the service process at startup. -->
+      <!-- KEY=VALUE pair injected by the SCM into the service process at startup. -->
       <RegistryValue Id="ServiceEnvironment"
                      Root="HKLM"
                      Key="SYSTEM\CurrentControlSet\Services\ClaudeUsageServer"
                      Name="Environment"
                      Type="multiString"
-                     Value="ClaudeUsageServer__CredentialsPath=[%USERPROFILE]\.claude\.credentials.json[~]ClaudeUsageServer__ClaudeCliPath=[%APPDATA]\npm\claude.cmd" />
+                     Value="ClaudeUsageServer__CredentialsPath=[%USERPROFILE]\.claude\.credentials.json" />
       <!-- Remove the SOFTWARE\ClaudeUsageServer key on uninstall (the service key is
            removed by DeleteServices which runs earlier in the sequence). -->
       <RemoveRegistryKey Id="RemoveServiceSoftwareKey"
