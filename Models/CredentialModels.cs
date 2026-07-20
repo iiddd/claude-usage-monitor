@@ -44,12 +44,19 @@ internal sealed class TokenRefreshResponse
 }
 
 /// <summary>
-/// Shape returned by <c>GET /status</c>. <c>State</c> is the coarse service state
-/// ("ok" | "refreshing" | "reauth_required" | "error"); the remaining fields are kept
-/// for backward compatibility with existing widget builds.
+/// Shape returned by <c>GET /status</c>. <c>State</c> is the coarse service state:
+/// "ok" | "refreshing" | "refresh_failed" | "reauth_required" | "credentials_missing" |
+/// "upstream_error". <c>TokenValid</c> is kept for backward compatibility with older widgets.
+/// <c>NextRetryAt</c> is populated only in "refresh_failed"; <c>UpstreamStatus</c> only in
+/// "upstream_error". No token material ever appears here.
 /// </summary>
 internal sealed record StatusResponse(
     string State,
     bool TokenValid,
     string? ExpiresAt,
-    string? LastRefresh);
+    string? LastRefresh,
+    string? LastRefreshAttempt,
+    string? LastRefreshError,
+    int ConsecutiveFailures,
+    string? NextRetryAt = null,
+    int? UpstreamStatus = null);

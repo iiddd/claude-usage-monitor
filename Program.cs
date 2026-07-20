@@ -38,7 +38,12 @@ try
         var retentionDays  = section.GetValue<int>("LogRetentionDays",  14);
         var maxFileSizeMB  = section.GetValue<int>("LogMaxFileSizeMB",  10);
 
-        cfg.MinimumLevel.Information()
+        // DiagnosticLogging drops our own minimum to Debug so the token/credential subsystem's
+        // correlation-tagged Debug events surface. Framework noise stays capped via the overrides
+        // below. Off = Information (the Debug calls compile to cheap no-ops).
+        var diagnostic = section.GetValue<bool>("DiagnosticLogging", false);
+
+        cfg.MinimumLevel.Is(diagnostic ? LogEventLevel.Debug : LogEventLevel.Information)
            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
            .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
            .Enrich.FromLogContext()
@@ -133,25 +138,32 @@ try
         // Fresh cache hit — serve immediately without an upstream call.
         var ttl = options.CurrentValue.CacheTtlSeconds;
         if (cache.TryGetFresh(ttl, out var fresh))
+        {
+            LogCacheDecision(logger, "hit");
             return Results.Content(fresh, "application/json");
+        }
 
-        // Cache miss — credentials must be valid to call upstream.
-        var state = store.State;
-        if (state == CredentialState.ReauthRequired)
-            return Results.Json(new { error = "reauth_required" }, statusCode: 503);
-        if (state == CredentialState.NotFound)
-            return Results.Json(new { error = "credentials_not_found" }, statusCode: 503);
-        if (state == CredentialState.Expired)
-            return Results.Json(new { error = "token_expired" }, statusCode: 503);
+        // Cache miss — credentials must be valid to call upstream. The error vocabulary matches
+        // the /status state names so the widget branches on one set of tokens.
+        var usageError = store.GetUsageError();
+        if (usageError is not null)
+        {
+            LogCacheDecision(logger, "miss:" + usageError);
+            return Results.Json(new { error = usageError }, statusCode: 503);
+        }
 
         using var upstream = new HttpRequestMessage(
             HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
 
         if (!store.TryApplyToken(upstream))
-            return Results.Json(new { error = "token_expired" }, statusCode: 503);
+        {
+            LogCacheDecision(logger, "miss:refresh_failed");
+            return Results.Json(new { error = "refresh_failed" }, statusCode: 503);
+        }
 
         upstream.Headers.TryAddWithoutValidation("anthropic-beta", "oauth-2025-04-20");
 
+        LogCacheDecision(logger, "miss:upstream");
         logger.LogInformation("Forwarding request to Anthropic usage endpoint");
 
         var http = factory.CreateClient();
@@ -163,32 +175,38 @@ try
 
             if (response.IsSuccessStatusCode)
             {
+                store.MarkUpstreamHealthy();
                 cache.Store(body);
                 return Results.Content(body, "application/json");
             }
 
-            // Non-200: fall back to stale cache if available, otherwise forward.
+            // Non-200: token itself is fine, the usage endpoint is failing.
+            store.MarkUpstreamError((int)response.StatusCode);
             logger.LogError("Anthropic returned HTTP {StatusCode}", (int)response.StatusCode);
 
             if (cache.TryGetStale(out var stale))
             {
+                LogCacheDecision(logger, "stale:upstream_error");
                 ctx.Response.Headers["X-Cache-Stale"] = "true";
                 return Results.Content(stale, "application/json");
             }
 
-            return Results.Content(body, "application/json", statusCode: (int)response.StatusCode);
+            return Results.Json(new { error = "upstream_error" }, statusCode: (int)response.StatusCode);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // Network-level failure reaching Anthropic — no HTTP status to record.
+            store.MarkUpstreamError(null);
             logger.LogError("Network error reaching Anthropic: {Reason}", ex.Message);
 
             if (cache.TryGetStale(out var stale))
             {
+                LogCacheDecision(logger, "stale:upstream_error");
                 ctx.Response.Headers["X-Cache-Stale"] = "true";
                 return Results.Content(stale, "application/json");
             }
 
-            return Results.Json(new { error = "upstream_unavailable" }, statusCode: 503);
+            return Results.Json(new { error = "upstream_error" }, statusCode: 503);
         }
     });
 
@@ -211,4 +229,12 @@ static void SetCorsHeaders(HttpResponse response)
     response.Headers["Access-Control-Allow-Origin"] = "*";
     response.Headers["Access-Control-Allow-Methods"] = "GET, OPTIONS";
     response.Headers["Access-Control-Allow-Headers"] = "*";
+}
+
+// Per-request cache hit/miss/stale decision. Debug-only, so it is silent unless
+// DiagnosticLogging is on. At the default 60s poll interval this is ~1 line/min.
+static void LogCacheDecision(Microsoft.Extensions.Logging.ILogger logger, string decision)
+{
+    if (logger.IsEnabled(LogLevel.Debug))
+        logger.LogDebug("/usage cache decision={Decision}", decision);
 }

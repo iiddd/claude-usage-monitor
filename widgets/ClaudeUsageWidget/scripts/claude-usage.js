@@ -209,27 +209,57 @@
             data.seven_day.utilization / 100, data.seven_day.resets_at);
     }
 
-    // Maps a known server error code to a distinct, actionable overlay.
-    // reauth_required gets its own "Login required" message; everything else
-    // falls back to the generic error title with the raw reason underneath.
+    // Maps a state code to a distinct, actionable overlay. The vocabulary matches the
+    // service's /status states, plus 'service_offline' — which the host sets ONLY when the
+    // fetch itself fails (connection refused: the service is not running), as opposed to the
+    // service answering with an error state. 'reason' may be a function of an optional detail
+    // (used by upstream_error to surface the upstream HTTP status).
     var ERROR_STATES = {
+        service_offline: {
+            title:  'Service offline',
+            reason: 'ClaudeUsageServer is not running'
+        },
         reauth_required: {
             title:  'Login required',
             reason: 'run `claude login` in a terminal'
+        },
+        credentials_missing: {
+            title:  'No credentials',
+            reason: 'install & login to Claude Code'
+        },
+        refresh_failed: {
+            title:  'Token refresh failing',
+            reason: 'retrying — check service logs'
+        },
+        upstream_error: {
+            title:  'Anthropic API error',
+            reason: function (detail) {
+                return detail ? ('HTTP ' + detail) : 'Anthropic API unavailable';
+            }
         }
     };
 
-    function renderError(message) {
+    // message: a state code (see ERROR_STATES) or an unmapped raw string.
+    // detail: optional extra (e.g. the upstream HTTP status for upstream_error).
+    function renderError(message, detail) {
         var errorOverlay   = document.getElementById('error-overlay');
         var loadingOverlay = document.getElementById('loading-overlay');
         var title          = document.getElementById('error-title');
         var reason         = document.getElementById('error-reason');
 
-        var mapped = ERROR_STATES[message];
+        var mapped     = ERROR_STATES[message];
+        var reasonText;
+        if (mapped) {
+            reasonText = (typeof mapped.reason === 'function')
+                ? mapped.reason(detail)
+                : mapped.reason;
+        } else {
+            reasonText = message || '';
+        }
 
         if (loadingOverlay) loadingOverlay.style.display = 'none';
-        if (title)  title.textContent  = mapped ? mapped.title  : 'Unable to fetch usage';
-        if (reason) reason.textContent = mapped ? mapped.reason : (message || '');
+        if (title)  title.textContent  = mapped ? mapped.title : 'Unable to fetch usage';
+        if (reason) reason.textContent = reasonText;
         if (errorOverlay) errorOverlay.style.display = 'flex';
     }
 

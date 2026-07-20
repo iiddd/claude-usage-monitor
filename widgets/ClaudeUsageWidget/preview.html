@@ -108,7 +108,7 @@
 		'      ClaudeUsage.renderData(msg.data);\n' +
 		'      ClaudeUsage.renderStale(!!msg.stale);\n' +
 		'    }\n' +
-		'    if (msg.type === "error")   ClaudeUsage.renderError(msg.message);\n' +
+		'    if (msg.type === "error")   ClaudeUsage.renderError(msg.message, msg.detail);\n' +
 		'    if (msg.type === "loading") ClaudeUsage.renderLoading();\n' +
 		'  });\n' +
 		'<\/script>\n' +
@@ -141,12 +141,24 @@
 				}
 			},
 			{
-				label: 'Error state',
-				msg: { type: 'error', message: 'credentials_not_found' }
+				label: 'Service offline — fetch failed (service not running)',
+				msg: { type: 'error', message: 'service_offline' }
 			},
 			{
-				label: 'Re-auth required',
+				label: 'Re-auth required — run claude login',
 				msg: { type: 'error', message: 'reauth_required' }
+			},
+			{
+				label: 'Credentials missing',
+				msg: { type: 'error', message: 'credentials_missing' }
+			},
+			{
+				label: 'Token refresh failing (retryable)',
+				msg: { type: 'error', message: 'refresh_failed' }
+			},
+			{
+				label: 'Anthropic API error — HTTP 500',
+				msg: { type: 'error', message: 'upstream_error', detail: 500 }
 			},
 			{
 				label: 'Loading state',

@@ -13,6 +13,13 @@ internal sealed class ServerOptions
     public int LogMaxFileSizeMB { get; set; } = 10;
     public int LogMaxTotalSizeMB { get; set; } = 100;
 
+    /// <summary>
+    /// Temporary troubleshooting switch. When true the token/credential subsystem logs at
+    /// Debug (correlation-tagged token-lifecycle events). Larger log volume; still bounded by
+    /// the rotation/size caps above. Off by default.
+    /// </summary>
+    public bool DiagnosticLogging { get; set; } = false;
+
     public string ResolvedCredentialsPath =>
         string.IsNullOrWhiteSpace(CredentialsPath)
             ? Path.Combine(

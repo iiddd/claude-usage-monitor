@@ -250,14 +250,19 @@
 			resolveConfig();
 			var isStaleResponse = false;
 
+			// A fetch rejection means the request never reached the service (connection
+			// refused / offline) — distinct from the service answering with an error body.
+			// The former carries no `.code`; the latter carries the /status state code.
 			fetch('http://localhost:41920/usage')
 			.then(function (r) {
 				isStaleResponse = r.headers.get('X-Cache-Stale') === 'true';
 				if (!r.ok) {
-					return r.json().then(function (body) {
-						throw new Error(body.error || ('HTTP ' + r.status));
-					}).catch(function () {
-						throw new Error('HTTP ' + r.status);
+					var status = r.status;
+					return r.json().catch(function () { return {}; }).then(function (body) {
+						var err = new Error(body.error || 'upstream_error');
+						err.code   = body.error || 'upstream_error';
+						err.status = status;
+						throw err;
 					});
 				}
 				return r.json();
@@ -270,7 +275,13 @@
 			})
 			.catch(function (err) {
 				ClaudeUsage.renderStale(false);
-				ClaudeUsage.renderError(err.message || 'Request failed');
+				if (err && err.code) {
+					// Service answered with an error state — render its specific message.
+					ClaudeUsage.renderError(err.code, err.status);
+				} else {
+					// Fetch itself failed — the service is not running.
+					ClaudeUsage.renderError('service_offline');
+				}
 			});
 		}
 
@@ -347,7 +358,7 @@
 				'window.addEventListener("message",function(e){' +
 				'var m=e.data||{};' +
 				'if(m.type==="render"){if(m.config)ClaudeUsage.configure(m.config);ClaudeUsage.renderStale(!!m.stale);ClaudeUsage.renderData(m.data);}' +
-				'if(m.type==="error")ClaudeUsage.renderError(m.message);' +
+				'if(m.type==="error")ClaudeUsage.renderError(m.message,m.detail);' +
 				'if(m.type==="loading")ClaudeUsage.renderLoading();' +
 				'});' +
 				'<\/script>' +
@@ -377,8 +388,24 @@
 					}
 				},
 				{
-					label: 'Error',
-					msg: { type: 'error', message: 'credentials_not_found' }
+					label: 'Service offline (fetch failed)',
+					msg: { type: 'error', message: 'service_offline' }
+				},
+				{
+					label: 'Re-auth required',
+					msg: { type: 'error', message: 'reauth_required' }
+				},
+				{
+					label: 'Credentials missing',
+					msg: { type: 'error', message: 'credentials_missing' }
+				},
+				{
+					label: 'Token refresh failing',
+					msg: { type: 'error', message: 'refresh_failed' }
+				},
+				{
+					label: 'Anthropic API error (HTTP 500)',
+					msg: { type: 'error', message: 'upstream_error', detail: 500 }
 				},
 				{
 					label: 'Loading',

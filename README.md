@@ -159,6 +159,7 @@ Every value is also overridable via environment variable using the prefix `Claud
 | `LogRetentionDays` | `14` | Number of daily log files to keep |
 | `LogMaxFileSizeMB` | `10` | Max size of a single log file before rolling to a new one |
 | `LogMaxTotalSizeMB` | `100` | Safety-net cap on total log directory size |
+| `DiagnosticLogging` | `false` | Temporary troubleshooting switch — drops the token/credential subsystem to Debug (see [Diagnostic logging](#diagnostic-logging)) |
 
 **Note:** `CredentialsPath` is never written to logs.
 
@@ -169,8 +170,35 @@ Every value is also overridable via environment variable using the prefix `Claud
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Returns `ok`. Used for readiness checks. |
-| `GET` | `/status` | Returns `{ state, tokenValid, expiresAt, lastRefresh }` where `state` is `ok` \| `refreshing` \| `reauth_required` \| `error`. No credential data. |
+| `GET` | `/status` | Returns the service state (see below). No credential data. |
 | `GET` | `/usage` | Proxies `https://api.anthropic.com/api/oauth/usage`. Returns usage JSON or a 503 error object. |
+
+#### `/status` shape
+
+```json
+{
+  "state": "ok",
+  "tokenValid": true,
+  "expiresAt": "2026-07-21T18:00:00.0000000+00:00",
+  "lastRefresh": "2026-07-21T13:00:00.0000000+00:00",
+  "lastRefreshAttempt": "2026-07-21T13:00:00.0000000+00:00",
+  "lastRefreshError": null,
+  "consecutiveFailures": 0,
+  "nextRetryAt": null,
+  "upstreamStatus": null
+}
+```
+
+| `state` | Meaning |
+|---------|---------|
+| `ok` | Token valid and the last upstream call succeeded |
+| `refreshing` | A refresh grant is currently in flight |
+| `refresh_failed` | Last refresh failed for a **retryable** reason (network / 5xx). `lastRefreshError` + `nextRetryAt` are set |
+| `reauth_required` | Refresh token rejected (`invalid_grant`) — **not** retryable; `claude login` needed |
+| `credentials_missing` | Credentials file absent or unreadable |
+| `upstream_error` | Token is fine but the Anthropic usage endpoint is failing; `upstreamStatus` carries the last HTTP status |
+
+`lastRefreshAttempt`, `lastRefreshError` (null when none) and `consecutiveFailures` are always present. `nextRetryAt` is populated only in `refresh_failed`; `upstreamStatus` only in `upstream_error`. **No token material ever appears in `/status`.**
 | `OPTIONS` | `/usage` | CORS preflight — returns 200 with CORS headers. |
 
 All endpoints are reachable only from `127.0.0.1`.
@@ -186,15 +214,17 @@ All endpoints are reachable only from `127.0.0.1`.
 
 ### Error responses
 
+The `error` field uses the same vocabulary as the `/status` state names, so the widget branches on one set of tokens.
+
 | Condition | Status | Body |
 |-----------|--------|------|
-| Credentials file not found | 503 | `{"error":"credentials_not_found"}` |
+| Credentials file absent/unreadable | 503 | `{"error":"credentials_missing"}` |
 | Refresh token expired/revoked — login needed | 503 | `{"error":"reauth_required"}` |
-| Token expired, refresh pending | 503 | `{"error":"token_expired"}` |
-| Anthropic non-200, no cache | same as upstream | upstream body |
+| Token expired / refresh failing | 503 | `{"error":"refresh_failed"}` |
+| Anthropic non-200, no cache | same as upstream | `{"error":"upstream_error"}` |
 | Anthropic error, stale cache | 200 + `X-Cache-Stale: true` | last cached body |
 | Network failure, stale cache | 200 + `X-Cache-Stale: true` | last cached body |
-| Network failure, no cache | 503 | `{"error":"upstream_unavailable"}` |
+| Network failure, no cache | 503 | `{"error":"upstream_error"}` |
 
 ---
 
@@ -206,7 +236,31 @@ Logs are written to `%ProgramData%\ClaudeUsageServer\logs\` (MSI install) or `lo
 - **Windows Event Log:** Application log, source `ClaudeUsageServer`. Warnings and errors only.
 - **Total-size cap:** a background task runs on startup and every 24 hours, deleting oldest files if the directory exceeds `LogMaxTotalSizeMB`.
 
-**What is never logged:** token values, Authorization headers, raw HTTP headers, file contents, or environment variable values.
+**What is never logged:** token values, Authorization headers, raw HTTP headers, raw OAuth response bodies, file contents, file paths, or environment variable values — **under any log level.**
+
+### Startup breadcrumb
+
+On every service start the log gets one self-describing **Information** line (always, regardless of `DiagnosticLogging`) so any file can be correlated to an incident after the fact:
+
+```
+startup breadcrumb: version=1.0.0 Port=41920 RefreshBufferMinutes=5 RetryIntervalSeconds=60 CacheTtlSeconds=60 DiagnosticLogging=False credentialsPresent=True expiresAt=2026-07-21T18:00:00.0000000+00:00 initialState=ok
+```
+
+It reports the service version, the effective config values, whether the credentials file was present, the `expiresAt` as read, and the computed initial state. No paths, no token material.
+
+### Diagnostic logging
+
+Set `DiagnosticLogging` to `true` (via `appsettings.json` or the `ClaudeUsageServer__DiagnosticLogging=true` environment variable) to trace the **token lifecycle** while diagnosing an intermittent issue. It drops the token/credential subsystem to **Debug** and emits one structured line per event, each tagged with a short **correlation id** (`[a1b2c3d4]`) so a single refresh cycle can be followed start-to-finish across interleaved lines:
+
+- **credentials read** — file last-write time, parsed `expiresAt`, and whether the `accessToken` / `refreshToken` fields were present (booleans only — never values, lengths, or prefixes)
+- **FileSystemWatcher event** — change type and the debounce decision (processed vs ignored as a self-write echo), plus the resulting `expiresAt` after re-read
+- **refresh scheduling** — when the next proactive refresh is due and the `expiresAt` it was computed from
+- **refresh attempt** — trigger (`scheduled` | `startup-expired` | `retry`) and the attempt number in the current failure streak
+- **refresh outcome** — success (new `expiresAt`; whether the refresh token rotated) or failure (HTTP status, OAuth `error` code, or exception type — never the raw body)
+- **state transitions** — `old -> new` with a reason
+- **/usage cache decisions** — hit / miss / stale, one line per request
+
+> **This is meant to be temporary.** Debug logging is more verbose. Volume is still bounded by the existing `LogMaxFileSizeMB` rotation and `LogMaxTotalSizeMB` total-size cap — nothing here can grow the log directory past those limits. At the default 60 s poll interval the chattiest event (`/usage` cache decisions) is only ~1 line/min. Turn it back to `false` once the issue is understood.
 
 ---
 
