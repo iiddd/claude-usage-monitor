@@ -4,6 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/iiddd/claude-usage-monitor)](https://github.com/iiddd/claude-usage-monitor/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/iiddd/claude-usage-monitor/badge)](https://scorecard.dev/viewer/?uri=github.com/iiddd/claude-usage-monitor)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16875/badge)](https://www.bestpractices.dev/projects/16875)
 
 > **Unofficial.** This is a free, open-source community project. It is not affiliated with,
 > endorsed by, or supported by Anthropic or Corsair. It reads usage data from an undocumented
