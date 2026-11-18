@@ -30,7 +30,7 @@
                    Remove-Item -Recurse -Force "$env:ProgramData\ClaudeUsageServer"
   -->
 
-  <Package Name="Claude Usage Server"
+  <Package Name="Claude Usage Monitor"
            Manufacturer="Andrey Merkulov"
            Version="1.1.2"
            UpgradeCode="B8C9D0E1-F2A3-4567-2345-67890ABCDEF0"
@@ -68,7 +68,7 @@
             KeyPath="yes" />
       <ServiceInstall Id="ServiceInstall"
                       Name="ClaudeUsageServer"
-                      DisplayName="Claude Usage Server"
+                      DisplayName="Claude Usage Monitor"
                       Description="Proxies Claude Code OAuth usage data to the iCUE widget."
                       Type="ownProcess"
                       Start="auto"
@@ -230,7 +230,7 @@
 
     <!-- ── Features ────────────────────────────────────────────────────────── -->
 
-    <Feature Id="Complete" Title="Claude Usage Server" Level="1">
+    <Feature Id="Complete" Title="Claude Usage Monitor" Level="1">
       <ComponentRef Id="MainExeComponent" />
       <ComponentRef Id="AppConfigComponent" />
       <ComponentRef Id="AppDllComponent" />

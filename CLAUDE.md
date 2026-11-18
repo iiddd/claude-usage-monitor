@@ -2,6 +2,8 @@
 
 **ClaudeUsageServer** is a single-machine tool that displays Claude Code token-usage statistics on a Corsair XENEON EDGE auxiliary display. It consists of two parts: a Windows Service that reads OAuth credentials from disk, keeps the access token fresh automatically, and exposes a CORS-enabled HTTP proxy on localhost; and an iCUE HTML widget that polls that proxy and renders the 5-hour and 7-day usage windows as segmented block bars with live countdown timers.
 
+**Naming:** the public name is **Claude Usage Monitor** (README, installer and Apps entry, service display name, iCUE widget name). `ClaudeUsageServer` stays the internal identifier (Windows service name, install and data folders, assembly, namespaces, MSI file name); do not rename it, because upgrades, the service registration and existing installs depend on it.
+
 Target platform: Windows 11, Corsair XENEON EDGE S horizontal slot (840×344 px), iCUE 5.
 
 ---
@@ -212,7 +214,7 @@ sc.exe delete ClaudeUsageServer
 dotnet publish -c Release -r win-x64 --self-contained false -o publish\
 
 # Re-register (run as Administrator)
-sc.exe create ClaudeUsageServer binPath= "C:\full\path\to\publish\ClaudeUsageServer.exe" DisplayName= "Claude Usage Server" start= auto
+sc.exe create ClaudeUsageServer binPath= "C:\full\path\to\publish\ClaudeUsageServer.exe" DisplayName= "Claude Usage Monitor" start= auto
 sc.exe start ClaudeUsageServer
 ```
 

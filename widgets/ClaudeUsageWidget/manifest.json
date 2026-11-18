@@ -1,9 +1,9 @@
 {
   "author": "Andrey Merkulov",
   "id": "com.andrey.claudeusage",
-  "name": "Claude Code Usage",
+  "name": "Claude Usage Monitor",
   "description": "Displays Claude Code token usage for the 5-hour and 7-day windows.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "preview_icon": "resources/claude-usage.svg",
   "min_framework_version": "1.0.1",
   "min_app_version": "5.52",
