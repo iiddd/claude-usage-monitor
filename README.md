@@ -11,380 +11,104 @@
 > Anthropic endpoint (`/api/oauth/usage`) that Claude Code itself uses, so it may stop working
 > if Anthropic changes that endpoint.
 
-A real-time Claude Code token usage display for the **Corsair XENEON EDGE** auxiliary screen.
-Two components ship together: a small Windows Service that manages authentication, and an iCUE widget that renders your usage on the display.
-
-## Preview
+Shows your Claude Code usage limits live on the **Corsair XENEON EDGE** auxiliary screen.
+Two parts ship together: a small Windows service that signs in with your Claude Code credentials,
+and an iCUE widget that draws your usage on the display.
 
 ![Widget — normal state](docs/preview-normal.png)
 ![Widget — error state](docs/preview-error.png)
 
 ## What it shows
 
-- **5-hour** and **7-day** usage windows, each rendered as a 10-segment block bar
-- Color-coded percentage (green → amber → red) as you approach the limit
-- Countdown to the next reset for each window
-- A status dot that turns amber when the data is stale (server unreachable but cached)
+- The **5-hour** and **7-day** usage windows, each as a 10-segment bar
+- The percentage used, colored green, amber, then red as you approach the limit
+- A countdown to the next reset of each window
+- A status dot that turns amber when the numbers are from cache because Anthropic can't be reached
 
 ## Requirements
 
-- Windows 10 / 11
+- Windows 10 or 11
 - Corsair XENEON EDGE with **iCUE 5.52 or newer**
 - Claude Code installed and signed in (`claude login`)
-- ASP.NET Core Runtime 10 (x64) (if not using the self-contained build)
+- **[ASP.NET Core Runtime 10](https://dotnet.microsoft.com/download/dotnet/10.0) (x64).** The
+  installer does not include it; without it the service cannot start.
 
 ## Install
 
-### Option A — MSI installer (recommended)
+Download `ClaudeUsageServer.msi` and `claudeusage.icuewidget` from the
+[latest release](https://github.com/iiddd/claude-usage-monitor/releases/latest).
 
-Download `ClaudeUsageServer.msi` and `claudeusage.icuewidget` from the [latest release](https://github.com/iiddd/claude-usage-monitor/releases/latest).
+1. Run `ClaudeUsageServer.msi` and accept the UAC prompt. The installer sets up the Windows service
+   and starts it.
+2. In iCUE, go to **Widgets → Import** and select `claudeusage.icuewidget`. When iCUE asks, allow the
+   widget to access `localhost:41920`; without that it shows "Service offline".
+3. Assign the widget to a XENEON EDGE S slot.
 
-1. Run `ClaudeUsageServer.msi` and accept the UAC prompt. The installer copies the service, registers it as a Windows Service, and starts it automatically.
-2. In iCUE, go to **Widgets → Import** and select `claudeusage.icuewidget`. When iCUE asks, approve the widget's access to `localhost:41920`; without it the widget shows "Service offline".
+The widget shows live usage as soon as the service is running.
 
-Release files are built by GitHub Actions from the tagged commit, with signed build provenance. To check that a download is genuine (requires the [GitHub CLI](https://cli.github.com)):
+### Check that a download is genuine
+
+The MSI is not code-signed yet, so Windows SmartScreen may warn on first run. Every release is built
+by GitHub Actions from the tagged commit, with signed build provenance. To verify a file (needs the
+[GitHub CLI](https://cli.github.com)):
 
 ```powershell
 gh attestation verify ClaudeUsageServer.msi --repo iiddd/claude-usage-monitor
 gh attestation verify claudeusage.icuewidget --repo iiddd/claude-usage-monitor
 ```
 
-3. Assign the widget to a XENEON EDGE S slot.
+Each release also lists SHA-256 checksums in `SHA256SUMS.txt`.
 
-The MSI is not code-signed yet, so Windows SmartScreen may warn on first run. Use the checks above to confirm the download is genuine.
+### Upgrade and uninstall
 
-That's it. The widget starts showing live usage as soon as the service is running.
+To upgrade, run the newer MSI; it replaces the old version and restarts the service. You don't need
+to re-import the widget unless the release notes say it changed.
 
-### Option B — Manual install
-
-**Register the Windows Event Log source (one-time, run as Administrator):**
-
-```powershell
-New-EventLog -Source "ClaudeUsageServer" -LogName Application
-```
-
-**Publish the service:**
-
-```powershell
-dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish\
-```
-
-**Register and start the service (run as Administrator):**
-
-```powershell
-sc.exe create ClaudeUsageServer `
-    binPath= "C:\path\to\publish\ClaudeUsageServer.exe" `
-    DisplayName= "Claude Usage Server" `
-    start= auto
-sc.exe description ClaudeUsageServer "Proxies Claude Code OAuth usage data to the iCUE widget."
-sc.exe start ClaudeUsageServer
-```
-
-**Import the widget into iCUE:**
-
-Go to **Widgets → Import** and select `widgets/claudeusage.icuewidget`.
-
-**Verify the service is up:**
-
-```powershell
-curl http://127.0.0.1:41920/health   # → ok
-curl http://127.0.0.1:41920/status   # → {"tokenValid":true,...}
-```
+To uninstall, use **Settings → Apps → Claude Usage Server → Uninstall**, and remove the widget in
+iCUE. Logs stay in `%ProgramData%\ClaudeUsageServer\logs\`; delete that folder to remove them too.
 
 ## Widget settings
 
-Configurable from the iCUE settings panel — no config files or restarts needed.
+Change these in the iCUE settings panel; they apply immediately.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Refresh Interval | 60 s | How often the widget polls the local service |
-| Threshold Color Coding | On | Switches block/percentage color from blue to green/amber/red based on utilization |
+| Refresh Interval | 60 s | How often the widget asks the service for new numbers |
+| Threshold Color Coding | On | Colors the bar and percentage green/amber/red by usage, instead of the fixed colors below |
 | Text Color | `#FFFFFF` | Color of the countdown text |
-| Block Color | `#3B82F6` | Filled block color (used when threshold coding is off) |
+| Block Color | `#3B82F6` | Filled block color (when threshold coding is off) |
 | Empty Block Color | `#484848` | Unfilled block color |
-| Percentage Color | `#FFFFFF` | Percentage label color (used when threshold coding is off) |
+| Percentage Color | `#FFFFFF` | Percentage color (when threshold coding is off) |
 | Low / Medium / High Color | green / amber / red | Colors used when threshold coding is on |
 | Background Color | `#161616` | Widget background |
-| Widget Transparency | 0% | Background opacity |
+| Widget Transparency | 0% | Background transparency |
 
-The port (`41920`) is hardcoded and is not a configurable widget property.
+## Troubleshooting
 
----
-
-## How it works
-
-```
-~/.claude/.credentials.json
-      │  claudeAiOauth.{ accessToken, expiresAt }
-      │  read on startup; watched for external changes
-      ▼
-┌──────────────────────────────────────────┐
-│  ClaudeUsageServer  (Windows Service)    │
-│  127.0.0.1:41920                         │
-│                                          │
-│  • Loads token into memory               │
-│  • Refreshes token ~5 min before expiry  │
-│  • Caches last Anthropic response        │
-│                                          │
-│  GET /health  → "ok"                     │
-│  GET /status  → { tokenValid, expiresAt }│
-│  GET /usage   → proxied Anthropic data   │
-└──────────────┬───────────────────────────┘
-               │  http://localhost:41920/usage
-               │  (no credentials in request)
-               ▼
-┌──────────────────────────────────────────┐
-│  ClaudeUsageWidget  (iCUE HTML widget)   │
-│  840 × 344 px  ·  XENEON EDGE S-H slot   │
-│                                          │
-│  • Polls proxy every N seconds           │
-│  • Renders block bars + countdown text   │
-└──────────────────────────────────────────┘
-```
-
-The service is the only component that handles credentials. The widget calls `localhost` and the service injects the bearer token server-side — no token is ever configured in iCUE or visible to the widget.
-
-### Token refresh
-
-On startup the service reads `~/.claude/.credentials.json` and schedules a proactive refresh at `expiresAt − 5 minutes`. At refresh time it performs a direct OAuth **`refresh_token` grant** — the same mechanism the Claude Code CLI uses internally:
-
-```
-POST https://platform.claude.com/v1/oauth/token      (falls back to https://console.anthropic.com/v1/oauth/token)
-Content-Type: application/json
-
-{ "grant_type": "refresh_token", "refresh_token": "…", "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e" }
-```
-
-The response returns a new access token, a new expiry, and (via token rotation) usually a **new refresh token**. The service writes all of these back into `~/.claude/.credentials.json` in the exact structure Claude Code expects — preserving every field it does not manage (`refreshTokenExpiresAt`, `scopes`, `subscriptionType`, …) — using an atomic temp-file-plus-rename so the file can never be left torn. The self-triggered `FileSystemWatcher` event is de-duplicated so this write does not cause a redundant reload.
-
-> **Consumes no usage.** Unlike an actual API call, the `refresh_token` grant does **not** count against your 5-hour or 7-day limits. This also means the token can still refresh when usage is at 100% — the exact moment the widget matters most.
-
-**Retry:** On a network or 5xx failure the service logs a warning and retries every 60 s (configurable). If Claude Code or another tool refreshes the token externally, the `FileSystemWatcher` picks up the change within ~500 ms.
-
-**Re-authentication required.** If the refresh token itself is expired or revoked (a long idle period, or a manual logout), the grant returns a client error. Retrying cannot help, so the service stops retrying, logs a single warning, and enters the **`reauth_required`** state — `/status` reports `"state": "reauth_required"`, `/usage` returns `503 {"error":"reauth_required"}`, and the widget shows a **“Login required — run `claude login` in a terminal”** message. Running `claude login` writes a fresh credentials file; the `FileSystemWatcher` picks it up and the service returns to normal automatically, **no restart needed**.
-
-The service no longer invokes the Claude CLI for refresh, so it does not need `claude` on the service account's `PATH`.
-
----
-
-## Configuration
-
-All settings live in `appsettings.json` next to the executable.
-Every value is also overridable via environment variable using the prefix `ClaudeUsageServer__<Key>`.
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `Port` | `41920` | TCP port Kestrel binds on (127.0.0.1 only) |
-| `CredentialsPath` | *(empty)* | Path to the credentials JSON. Empty = `%USERPROFILE%\.claude\.credentials.json` |
-| `RefreshBufferMinutes` | `5` | Minutes before token expiry to trigger a proactive refresh |
-| `RetryIntervalSeconds` | `60` | Wait between failed refresh retries |
-| `CacheTtlSeconds` | `60` | How long a successful Anthropic response is served from cache |
-| `LogRetentionDays` | `14` | Number of daily log files to keep |
-| `LogMaxFileSizeMB` | `10` | Max size of a single log file before rolling to a new one |
-| `LogMaxTotalSizeMB` | `100` | Safety-net cap on total log directory size |
-| `DiagnosticLogging` | `false` | Temporary troubleshooting switch — drops the token/credential subsystem to Debug (see [Diagnostic logging](#diagnostic-logging)) |
-
-**Note:** `CredentialsPath` is never written to logs.
-
----
-
-## Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Returns `ok`. Used for readiness checks. |
-| `GET` | `/status` | Returns the service state (see below). No credential data. |
-| `GET` | `/usage` | Proxies `https://api.anthropic.com/api/oauth/usage`. Returns usage JSON or a 503 error object. |
-
-#### `/status` shape
-
-```json
-{
-  "state": "ok",
-  "tokenValid": true,
-  "expiresAt": "2026-07-21T18:00:00.0000000+00:00",
-  "lastRefresh": "2026-07-21T13:00:00.0000000+00:00",
-  "lastRefreshAttempt": "2026-07-21T13:00:00.0000000+00:00",
-  "lastRefreshError": null,
-  "consecutiveFailures": 0,
-  "nextRetryAt": null,
-  "upstreamStatus": null,
-  "upstreamRetryAt": null
-}
-```
-
-| `state` | Meaning |
-|---------|---------|
-| `ok` | Token valid and the last upstream call succeeded |
-| `refreshing` | A refresh grant is currently in flight |
-| `refresh_failed` | Last refresh failed for a **retryable** reason (network / 5xx). `lastRefreshError` + `nextRetryAt` are set |
-| `reauth_required` | Refresh token rejected (`invalid_grant`) — **not** retryable; `claude login` needed |
-| `credentials_missing` | Credentials file absent or unreadable |
-| `upstream_error` | Token is fine but the Anthropic usage endpoint is failing; `upstreamStatus` carries the last HTTP status |
-
-`lastRefreshAttempt`, `lastRefreshError` (null when none) and `consecutiveFailures` are always present. `nextRetryAt` is populated only in `refresh_failed`; `upstreamStatus` only in `upstream_error`. `upstreamRetryAt` is set while usage requests are paused after an Anthropic HTTP 429 (see [Rate limiting](#rate-limiting)). **No token material ever appears in `/status`.**
-| `OPTIONS` | `/usage` | CORS preflight — returns 200 with CORS headers. |
-
-All endpoints are reachable only from `127.0.0.1`.
-
-### Response caching
-
-`/usage` caches the last successful Anthropic response in memory:
-
-1. **Fresh cache hit** (younger than `CacheTtlSeconds`) — returned immediately, no upstream call.
-2. **Cache miss** — upstream is called; on success the response is cached and returned.
-3. **Anthropic error with stale cache** — stale body returned with `X-Cache-Stale: true` header.
-4. **Anthropic error with no cache** — error returned as-is.
-
-Only one request calls Anthropic at a time. Requests that arrive while a call is in flight (for example two widget instances polling together) wait for it and reuse its result.
-
-### Rate limiting
-
-When Anthropic answers HTTP 429, the service stops calling the usage endpoint for a while: for the `Retry-After` the server sends (capped at 1 hour), or otherwise 1, 2, 4, 8, then 15 minutes for consecutive 429s. During the pause `/usage` makes no upstream call and returns the stale cache (or `upstream_error` with status 429 when there is none), with a `Retry-After` header saying when the next call will be made. `/status` shows the time in `upstreamRetryAt`. The first successful call clears the backoff.
-
-### Error responses
-
-The `error` field uses the same vocabulary as the `/status` state names, so the widget branches on one set of tokens.
-
-| Condition | Status | Body |
-|-----------|--------|------|
-| Credentials file absent/unreadable | 503 | `{"error":"credentials_missing"}` |
-| Refresh token expired/revoked — login needed | 503 | `{"error":"reauth_required"}` |
-| Token expired / refresh failing | 503 | `{"error":"refresh_failed"}` |
-| Anthropic non-200, no cache | same as upstream | `{"error":"upstream_error"}` |
-| Rate-limited (HTTP 429), no cache | 429 + `Retry-After` | `{"error":"upstream_error"}` |
-| Rate-limited (HTTP 429), stale cache | 200 + `X-Cache-Stale: true` + `Retry-After` | last cached body |
-| Anthropic error, stale cache | 200 + `X-Cache-Stale: true` | last cached body |
-| Network failure, stale cache | 200 + `X-Cache-Stale: true` | last cached body |
-| Network failure, no cache | 503 | `{"error":"upstream_error"}` |
-
----
-
-## Logging
-
-Logs are written to `%ProgramData%\ClaudeUsageServer\logs\` (MSI install) or `logs\` next to the executable (manual install).
-
-- **Rolling file:** one file per day (`claudeusageserver-YYYYMMDD.log`), rolls to a numeric suffix if a single day exceeds `LogMaxFileSizeMB`.
-- **Windows Event Log:** Application log, source `ClaudeUsageServer`. Warnings and errors only.
-- **Total-size cap:** a background task runs on startup and every 24 hours, deleting oldest files if the directory exceeds `LogMaxTotalSizeMB`.
-
-**What is never logged:** token values, Authorization headers, raw HTTP headers, raw OAuth response bodies, file contents, file paths, or environment variable values — **under any log level.**
-
-### Startup breadcrumb
-
-On every service start the log gets one self-describing **Information** line (always, regardless of `DiagnosticLogging`) so any file can be correlated to an incident after the fact:
-
-```
-startup breadcrumb: version=1.0.0 Port=41920 RefreshBufferMinutes=5 RetryIntervalSeconds=60 CacheTtlSeconds=60 DiagnosticLogging=False credentialsPresent=True expiresAt=2026-07-21T18:00:00.0000000+00:00 initialState=ok
-```
-
-It reports the service version, the effective config values, whether the credentials file was present, the `expiresAt` as read, and the computed initial state. No paths, no token material.
-
-### Diagnostic logging
-
-Set `DiagnosticLogging` to `true` (via `appsettings.json` or the `ClaudeUsageServer__DiagnosticLogging=true` environment variable) to trace the **token lifecycle** while diagnosing an intermittent issue. It drops the token/credential subsystem to **Debug** and emits one structured line per event, each tagged with a short **correlation id** (`[a1b2c3d4]`) so a single refresh cycle can be followed start-to-finish across interleaved lines:
-
-- **credentials read** — file last-write time, parsed `expiresAt`, and whether the `accessToken` / `refreshToken` fields were present (booleans only — never values, lengths, or prefixes)
-- **FileSystemWatcher event** — change type and the debounce decision (processed vs ignored as a self-write echo), plus the resulting `expiresAt` after re-read
-- **refresh scheduling** — when the next proactive refresh is due and the `expiresAt` it was computed from
-- **refresh attempt** — trigger (`scheduled` | `startup-expired` | `retry`) and the attempt number in the current failure streak
-- **refresh outcome** — success (new `expiresAt`; whether the refresh token rotated) or failure (HTTP status, OAuth `error` code, or exception type — never the raw body)
-- **state transitions** — `old -> new` with a reason
-- **/usage cache decisions** — hit / miss / stale, one line per request
-
-> **This is meant to be temporary.** Debug logging is more verbose. Volume is still bounded by the existing `LogMaxFileSizeMB` rotation and `LogMaxTotalSizeMB` total-size cap — nothing here can grow the log directory past those limits. At the default 60 s poll interval the chattiest event (`/usage` cache decisions) is only ~1 line/min. Turn it back to `false` once the issue is understood.
-
----
-
-## Build
+First check what the service reports:
 
 ```powershell
-# Service
-dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish\
-
-# MSI
-dotnet build ClaudeUsageServer.Installer\ClaudeUsageServer.Installer.wixproj -c Release -p:Platform=x64
-
-# Or both in one pass
-dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish\
-dotnet build ClaudeUsageServer.sln -c Release -p:Platform=x64
+curl http://127.0.0.1:41920/status
 ```
 
-The MSI is output to `ClaudeUsageServer.Installer\bin\x64\Release\ClaudeUsageServer.msi`.
+| The widget shows | What to do |
+|------------------|------------|
+| **Service offline** | The widget can't reach the service. Check that **Claude Usage Server** is running in `services.msc`. If it won't start, install the [ASP.NET Core Runtime 10](https://dotnet.microsoft.com/download/dotnet/10.0) (x64). If the service is running, check that the widget's permission for `localhost:41920` is still allowed in iCUE. |
+| **No credentials** | `/status` says `credentials_missing`. Install Claude Code and run `claude login`. The service picks up the new credentials on its own, without a restart. |
+| **Login required** | Your Claude Code sign-in has expired. Run `claude login` in a terminal; the widget recovers by itself. |
+| **Anthropic API error, HTTP 429** | Anthropic is rate-limiting the usage endpoint. The service waits (1, 2, 4, 8, then 15 minutes) before trying again, and recovers on its own. `upstreamRetryAt` in `/status` shows when it will try next. |
+| **Token refresh failing** | The service couldn't reach Anthropic to renew the token and retries every minute. Check your internet connection. |
 
-For a self-contained single-file executable:
-
-```powershell
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish\
-```
-
-## Tests
-
-```powershell
-dotnet test tests\ClaudeUsageServer.Tests
-```
-
-The tests run fully offline: the Anthropic endpoints are stubbed and the credentials file is a temporary copy. They cover the credential state machine, the response cache, the token-refresh flow (success with write-back, rejected refresh token, server errors with fallback host, recovery after `claude login`), the HTTP endpoints including CORS and stale-cache fallback, and checks that no token ever appears in logs or `/status`.
-
-[CI](.github/workflows/ci.yml) runs the tests on every push and pull request, fails on NuGet packages with known vulnerabilities, and validates the widget with `icuewidget-cli`.
-
----
-
-## MSI installer details
-
-### What the installer does
-
-1. Copies all service files to `%ProgramFiles%\ClaudeUsageServer\`.
-2. Creates `%ProgramData%\ClaudeUsageServer\logs\` for log files.
-3. Registers the Windows Event Log source `ClaudeUsageServer`.
-4. Installs the Windows Service (auto-start, LocalSystem account).
-5. Writes the installing user's `%USERPROFILE%` and `%APPDATA%` paths into the service's environment registry entry so LocalSystem can find the credentials file and Claude CLI at runtime.
-6. Starts the service.
-
-### Uninstall
-
-**Settings → Apps → Claude Usage Server → Uninstall**, or via Add/Remove Programs.
-
-| Action | Detail |
-|--------|--------|
-| Stop service | Waits for exit before proceeding |
-| Delete service | Removes SCM registration |
-| Remove files | Deletes `%ProgramFiles%\ClaudeUsageServer\` |
-| Remove Event Log source | Deletes the registry key |
-
-`%ProgramData%\ClaudeUsageServer\logs\` is **not** removed. To fully wipe:
-
-```powershell
-Remove-Item -Recurse -Force "$env:ProgramData\ClaudeUsageServer"
-```
-
-### Upgrade
-
-Install a new MSI over an existing installation. The installer performs a major upgrade (removes old, installs new). The service is stopped before removal and restarted after install.
-
-`appsettings.json` is overwritten on upgrade. Use environment variable overrides to survive upgrades:
-
-```powershell
-$svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer"
-$existing = (Get-ItemProperty $svcKey).Environment
-Set-ItemProperty $svcKey -Name Environment -Value (
-    @("ClaudeUsageServer__CredentialsPath=C:\Users\You\.claude\.credentials.json") + $existing
-)
-```
-
-### Troubleshooting
-
-**Service won't start after install**
-
-Check `%ProgramData%\ClaudeUsageServer\logs\`. The most common cause is the installer failing to write user paths into the registry. Verify:
+**The service won't start after installing.** Check the logs in `%ProgramData%\ClaudeUsageServer\logs\`
+and the Windows Event Log (Application, source `ClaudeUsageServer`). Besides a missing ASP.NET Core
+Runtime, the usual cause is a wrong credentials path. Check it with:
 
 ```powershell
 Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer" -Name Environment
-# Expected:
-# ClaudeUsageServer__CredentialsPath=C:\Users\YourName\.claude\.credentials.json
+# Expected: ClaudeUsageServer__CredentialsPath=C:\Users\<you>\.claude\.credentials.json
 ```
 
-To fix manually (run as Administrator):
+To fix it (as Administrator):
 
 ```powershell
 $svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\ClaudeUsageServer"
@@ -395,19 +119,50 @@ sc.exe stop ClaudeUsageServer
 sc.exe start ClaudeUsageServer
 ```
 
-**Port 41920 already in use**
+**Port 41920 is already in use.** The widget has this port built in, so changing it means rebuilding
+the widget. See [Changing the port](docs/reference.md#changing-the-port).
 
-Change `Port` in `appsettings.json`, update the widget's hardcoded port reference in `index.html`, and restart the service.
+## How it works
 
-**Claude Code not installed or not authenticated**
+```
+~/.claude/.credentials.json
+      │  read on startup, watched for changes
+      ▼
+┌──────────────────────────────────────────┐
+│  Claude Usage Server  (Windows service)  │
+│  127.0.0.1:41920 — your computer only    │
+│                                          │
+│  • Keeps your Claude Code token fresh    │
+│  • Asks Anthropic for your usage         │
+│  • Caches it, backs off when rate-limited│
+└──────────────┬───────────────────────────┘
+               │  http://localhost:41920/usage
+               │  (no credentials in the request)
+               ▼
+┌──────────────────────────────────────────┐
+│  Claude Usage widget  (iCUE)             │
+│  • Asks the service every N seconds      │
+│  • Draws the bars and countdowns         │
+└──────────────────────────────────────────┘
+```
 
-The service starts but `/status` returns `tokenValid: false`. Run `claude login`, then restart the service or wait up to ~500 ms for the `FileSystemWatcher` to pick up the new credentials file.
+Only the service handles credentials. The widget never sees your token; it only talks to the local
+service, which adds the token when it calls Anthropic. Refreshing the token uses the same OAuth
+mechanism as the Claude Code CLI and **does not count against your usage**, so it keeps working even
+at 100%.
 
----
+### Endpoints
 
-## Contributing
+The service answers on `http://127.0.0.1:41920`:
 
-Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem, the test policy, and the code style.
+| Path | Returns |
+|------|---------|
+| `/health` | `ok` |
+| `/status` | The service state, for example `ok`, `reauth_required` or `upstream_error`. No credentials. |
+| `/usage` | Your usage from Anthropic, or an error code the widget understands |
+
+Configuration, response shapes, error codes, caching, rate limiting, logging and the token refresh
+details are in the **[reference](docs/reference.md)**.
 
 ## Privacy
 
@@ -417,6 +172,28 @@ The service sends nothing anywhere except to Anthropic, and only to do what you 
 - **Anthropic's OAuth token endpoints** (`https://platform.claude.com/v1/oauth/token`, falling back to `https://console.anthropic.com/v1/oauth/token`), to refresh that token before it expires, the same way the Claude Code CLI does.
 
 Anthropic's handling of that data is covered by [Anthropic's Privacy Policy](https://www.anthropic.com/legal/privacy). There is no telemetry, analytics, or update check, and nothing is sent to the maintainer. The service listens only on `127.0.0.1`; the iCUE widget talks only to that local service and never sees your credentials. To stop all network activity, stop or uninstall the **Claude Usage Server** Windows service.
+
+## Development
+
+### Build
+
+```powershell
+dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish\
+dotnet build ClaudeUsageServer.Installer\ClaudeUsageServer.Installer.wixproj -c Release -p:Platform=x64
+```
+
+### Tests
+
+```powershell
+dotnet test tests\ClaudeUsageServer.Tests
+```
+
+The tests run offline and run in CI on every push and pull request. Packaging the widget, manual
+installation and what the tests cover are in the [reference](docs/reference.md#build).
+
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem, the test policy, and the code style.
 
 ## Security
 
