@@ -48,7 +48,8 @@ internal sealed class TokenRefreshResponse
 /// "ok" | "refreshing" | "refresh_failed" | "reauth_required" | "credentials_missing" |
 /// "upstream_error". <c>TokenValid</c> is kept for backward compatibility with older widgets.
 /// <c>NextRetryAt</c> is populated only in "refresh_failed"; <c>UpstreamStatus</c> only in
-/// "upstream_error". No token material ever appears here.
+/// "upstream_error". <c>UpstreamRetryAt</c> is set while usage requests are paused after an
+/// Anthropic HTTP 429. No token material ever appears here.
 /// </summary>
 internal sealed record StatusResponse(
     string State,
@@ -59,4 +60,5 @@ internal sealed record StatusResponse(
     string? LastRefreshError,
     int ConsecutiveFailures,
     string? NextRetryAt = null,
-    int? UpstreamStatus = null);
+    int? UpstreamStatus = null,
+    string? UpstreamRetryAt = null);

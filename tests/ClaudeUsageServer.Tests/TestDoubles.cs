@@ -17,9 +17,19 @@ internal sealed record CapturedRequest(
 /// Stub HTTP handler: records every request and answers via <c>respond</c>. Never touches
 /// the network, so no test can reach Anthropic.
 /// </summary>
-internal sealed class FakeHttpHandler(Func<CapturedRequest, HttpResponseMessage> respond) : HttpMessageHandler
+internal sealed class FakeHttpHandler : HttpMessageHandler
 {
     private readonly ConcurrentQueue<CapturedRequest> _requests = new();
+    private readonly Func<CapturedRequest, Task<HttpResponseMessage>> _respond;
+
+    public FakeHttpHandler(Func<CapturedRequest, HttpResponseMessage> respond)
+        => _respond = request => Task.FromResult(respond(request));
+
+    private FakeHttpHandler(Func<CapturedRequest, Task<HttpResponseMessage>> respond)
+        => _respond = respond;
+
+    /// <summary>A handler whose responses can be delayed, e.g. to hold a request in flight.</summary>
+    public static FakeHttpHandler Async(Func<CapturedRequest, Task<HttpResponseMessage>> respond) => new(respond);
 
     public IReadOnlyList<CapturedRequest> Requests => _requests.ToArray();
 
@@ -37,8 +47,18 @@ internal sealed class FakeHttpHandler(Func<CapturedRequest, HttpResponseMessage>
 
         var captured = new CapturedRequest(request.Method, request.RequestUri!, headers, body);
         _requests.Enqueue(captured);
-        return respond(captured);
+        return await _respond(captured);
     }
+}
+
+/// <summary>A clock the test moves by hand.</summary>
+internal sealed class ManualTimeProvider : TimeProvider
+{
+    private DateTimeOffset _now = new(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    public override DateTimeOffset GetUtcNow() => _now;
+
+    public void Advance(TimeSpan by) => _now += by;
 }
 
 internal sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
