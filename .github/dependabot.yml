@@ -1,0 +1,30 @@
+# Dependabot version updates. Security updates are enabled separately in the repo settings
+# and are not limited by this schedule.
+version: 2
+
+updates:
+  # GitHub Actions: keeps the commit-SHA pins in .github/workflows up to date.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  # NuGet: the service, the test project, and the WiX installer project.
+  - package-ecosystem: nuget
+    directories:
+      - /
+      - /tests/ClaudeUsageServer.Tests
+      - /ClaudeUsageServer.Installer
+    schedule:
+      interval: weekly
+    groups:
+      # Minor and patch bumps arrive as one PR; major versions get their own PRs.
+      nuget-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
