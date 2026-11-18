@@ -49,8 +49,9 @@ gh attestation verify ClaudeUsageServer.msi --repo iiddd/claude-usage-monitor
 gh attestation verify claudeusage.icuewidget --repo iiddd/claude-usage-monitor
 ```
 
-The MSI is not code-signed yet, so Windows SmartScreen may warn on first run.
 3. Assign the widget to a XENEON EDGE S slot.
+
+The MSI is not code-signed yet, so Windows SmartScreen may warn on first run. Use the checks above to confirm the download is genuine.
 
 That's it. The widget starts showing live usage as soon as the service is running.
 
@@ -407,6 +408,15 @@ The service starts but `/status` returns `tokenValid: false`. Run `claude login`
 ## Contributing
 
 Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem, the test policy, and the code style.
+
+## Privacy
+
+The service sends nothing anywhere except to Anthropic, and only to do what you installed it for:
+
+- **Anthropic's usage endpoint** (`https://api.anthropic.com/api/oauth/usage`), to read the Claude Code usage the widget displays. The request carries your own Claude Code OAuth access token, read from your local `~/.claude/.credentials.json`.
+- **Anthropic's OAuth token endpoints** (`https://platform.claude.com/v1/oauth/token`, falling back to `https://console.anthropic.com/v1/oauth/token`), to refresh that token before it expires, the same way the Claude Code CLI does.
+
+Anthropic's handling of that data is covered by [Anthropic's Privacy Policy](https://www.anthropic.com/legal/privacy). There is no telemetry, analytics, or update check, and nothing is sent to the maintainer. The service listens only on `127.0.0.1`; the iCUE widget talks only to that local service and never sees your credentials. To stop all network activity, stop or uninstall the **Claude Usage Server** Windows service.
 
 ## Security
 
