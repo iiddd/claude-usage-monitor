@@ -212,6 +212,15 @@ sc.exe create ClaudeUsageServer binPath= "C:\full\path\to\publish\ClaudeUsageSer
 sc.exe start ClaudeUsageServer
 ```
 
+### Cut a release
+
+1. Bump `<Version>` in `ClaudeUsageServer.csproj` and `Version` in `ClaudeUsageServer.Installer/Package.wxs` to the same value (the release workflow fails if they differ from the tag). Bump `version` in the widget `manifest.json` if the widget changed.
+2. Merge to `main`, then tag and push: `git tag v1.2.0; git push origin v1.2.0`. A tag with a suffix (`v1.2.0-rc.1`) makes a pre-release.
+3. `.github/workflows/release.yml` tests, publishes, checks installer coverage, builds the MSI and the widget, writes `SHA256SUMS.txt`, attests build provenance, and creates a **draft** release with generated notes.
+4. Edit the notes and publish the draft.
+
+If a dependency update adds or removes a published DLL, CI fails at "Check installer covers every published file": add or remove the matching `<Component>` and `<ComponentRef>` in `Package.wxs`.
+
 ### Run the automated tests
 
 ```powershell
