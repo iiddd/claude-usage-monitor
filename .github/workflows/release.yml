@@ -1,0 +1,98 @@
+name: Release
+
+# Pushing a version tag (e.g. v1.2.0, or v1.2.0-rc.1 for a pre-release) builds the MSI and the iCUE widget from that commit,
+# attests their build provenance, and creates a DRAFT GitHub release with them attached.
+# Review the generated notes, then publish the draft.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and draft release
+    runs-on: windows-latest
+    permissions:
+      contents: write      # create the release
+      id-token: write      # sign the provenance attestation
+      attestations: write  # store the attestation
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Check tag matches project versions
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # A pre-release tag (v1.2.0-rc.1) must match the project version without its suffix.
+          $version = $env:TAG.TrimStart('v').Split('-')[0]
+          $csproj = ([xml](Get-Content ClaudeUsageServer.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          $wxs = [regex]::Match((Get-Content ClaudeUsageServer.Installer/Package.wxs -Raw), '<Package[^>]*\sVersion="([^"]+)"').Groups[1].Value
+          $widget = (Get-Content widgets/ClaudeUsageWidget/manifest.json -Raw | ConvertFrom-Json).version
+          Write-Output "tag=$version csproj=$csproj Package.wxs=$wxs widget=$widget"
+          if ($csproj -ne $version -or $wxs -ne $version) {
+            Write-Output "::error::Tag $env:TAG does not match ClaudeUsageServer.csproj ($csproj) and Package.wxs ($wxs). Bump both, then re-tag."
+            exit 1
+          }
+
+      - name: Run tests
+        run: dotnet test tests/ClaudeUsageServer.Tests -c Release
+
+      - name: Publish service
+        run: dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish
+
+      - name: Check installer covers every published file
+        shell: pwsh
+        run: ./.github/scripts/Test-InstallerFiles.ps1
+
+      - name: Build MSI
+        run: dotnet build ClaudeUsageServer.Installer/ClaudeUsageServer.Installer.wixproj -c Release -p:Platform=x64
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Package widget
+        run: |
+          npx --yes icuewidget-cli@0.5.2 validate widgets/ClaudeUsageWidget
+          npx --yes icuewidget-cli@0.5.2 package -o dist/claudeusage.icuewidget widgets/ClaudeUsageWidget
+
+      - name: Collect release files
+        shell: pwsh
+        run: |
+          Copy-Item ClaudeUsageServer.Installer/bin/x64/Release/ClaudeUsageServer.msi dist/
+          Get-ChildItem dist -File | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/ClaudeUsageServer.msi
+            dist/claudeusage.icuewidget
+
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          # Attach the signed provenance bundle so it can be checked offline as well.
+          Copy-Item $env:BUNDLE "dist/claude-usage-monitor-$env:TAG.intoto.jsonl"
+          $extra = @()
+          if ($env:TAG.Contains('-')) { $extra += '--prerelease' }
+          gh release create $env:TAG (Get-ChildItem dist -File).FullName `
+            --draft --verify-tag --generate-notes --title $env:TAG @extra

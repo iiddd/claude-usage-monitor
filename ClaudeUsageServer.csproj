@@ -7,12 +7,18 @@
     <AssemblyName>ClaudeUsageServer</AssemblyName>
     <RootNamespace>ClaudeUsageServer</RootNamespace>
     <Version>1.1.0</Version>
-    <!-- The test project lives under the repo root; keep its sources out of this project. -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**</DefaultItemExcludes>
+    <!-- This project sits at the repo root: keep the test sources, the installer project, the
+         widget, and build output out of its default globs (and out of the publish output). -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**;ClaudeUsageServer.Installer/**;widgets/**;docs/**;publish/**;dist/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="ClaudeUsageServer.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Machine-local overrides (gitignored) must never end up in a build or installer. -->
+    <Content Update="appsettings.Local.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>

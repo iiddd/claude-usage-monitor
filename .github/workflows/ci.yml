@@ -32,6 +32,15 @@ jobs:
           name: test-results
           path: TestResults
 
+      - name: Publish service
+        run: dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained false -o publish
+
+      # Package.wxs lists installed files by hand; catch dependency changes that would
+      # otherwise ship an MSI missing a DLL.
+      - name: Check installer covers every published file
+        shell: pwsh
+        run: ./.github/scripts/Test-InstallerFiles.ps1
+
       - name: Check for vulnerable NuGet packages
         shell: pwsh
         run: |

@@ -40,6 +40,15 @@ Download `ClaudeUsageServer.msi` and `claudeusage.icuewidget` from the [latest r
 
 1. Run `ClaudeUsageServer.msi` and accept the UAC prompt. The installer copies the service, registers it as a Windows Service, and starts it automatically.
 2. In iCUE, go to **Widgets → Import** and select `claudeusage.icuewidget`. When iCUE asks, approve the widget's access to `localhost:41920`; without it the widget shows "Service offline".
+
+Release files are built by GitHub Actions from the tagged commit, with signed build provenance. To check that a download is genuine (requires the [GitHub CLI](https://cli.github.com)):
+
+```powershell
+gh attestation verify ClaudeUsageServer.msi --repo iiddd/claude-usage-monitor
+gh attestation verify claudeusage.icuewidget --repo iiddd/claude-usage-monitor
+```
+
+The MSI is not code-signed yet, so Windows SmartScreen may warn on first run.
 3. Assign the widget to a XENEON EDGE S slot.
 
 That's it. The widget starts showing live usage as soon as the service is running.
