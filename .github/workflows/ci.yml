@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build, test, and validate
+    # The service targets net10.0-windows, so it builds and tests on Windows.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run tests
+        run: dotnet test tests/ClaudeUsageServer.Tests -c Release --logger trx --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+
+      - name: Check for vulnerable NuGet packages
+        shell: pwsh
+        run: |
+          $report = dotnet list ClaudeUsageServer.csproj package --vulnerable --include-transitive --format json | ConvertFrom-Json
+          $vulnerable = @($report.projects | ForEach-Object { $_.frameworks } | Where-Object { $_ } |
+            ForEach-Object { @($_.topLevelPackages) + @($_.transitivePackages) } | Where-Object { $_ })
+          if ($vulnerable.Count -gt 0) {
+            $vulnerable | ForEach-Object { Write-Output "::error::$($_.id) $($_.resolvedVersion) has a known vulnerability" }
+            exit 1
+          }
+          Write-Output "No vulnerable packages found."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate iCUE widget
+        run: npx --yes icuewidget-cli@0.5.2 validate widgets/ClaudeUsageWidget

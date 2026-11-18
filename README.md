@@ -1,5 +1,14 @@
 # Claude Usage Widget for XENEON EDGE
 
+[![CI](https://github.com/iiddd/claude-usage-monitor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iiddd/claude-usage-monitor/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/iiddd/claude-usage-monitor)](https://github.com/iiddd/claude-usage-monitor/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+> **Unofficial.** This is a free, open-source community project. It is not affiliated with,
+> endorsed by, or supported by Anthropic or Corsair. It reads usage data from an undocumented
+> Anthropic endpoint (`/api/oauth/usage`) that Claude Code itself uses, so it may stop working
+> if Anthropic changes that endpoint.
+
 A real-time Claude Code token usage display for the **Corsair XENEON EDGE** auxiliary screen.
 Two components ship together: a small Windows Service that manages authentication, and an iCUE widget that renders your usage on the display.
 
@@ -18,7 +27,7 @@ Two components ship together: a small Windows Service that manages authenticatio
 ## Requirements
 
 - Windows 10 / 11
-- Corsair XENEON EDGE with **iCUE 5**
+- Corsair XENEON EDGE with **iCUE 5.52 or newer**
 - Claude Code installed and signed in (`claude login`)
 - ASP.NET Core Runtime 10 (x64) (if not using the self-contained build)
 
@@ -26,8 +35,10 @@ Two components ship together: a small Windows Service that manages authenticatio
 
 ### Option A — MSI installer (recommended)
 
+Download `ClaudeUsageServer.msi` and `claudeusage.icuewidget` from the [latest release](https://github.com/iiddd/claude-usage-monitor/releases/latest).
+
 1. Run `ClaudeUsageServer.msi` and accept the UAC prompt. The installer copies the service, registers it as a Windows Service, and starts it automatically.
-2. In iCUE, go to **Widgets → Import** and select `claudeusage.icuewidget`.
+2. In iCUE, go to **Widgets → Import** and select `claudeusage.icuewidget`. When iCUE asks, approve the widget's access to `localhost:41920`; without it the widget shows "Service offline".
 3. Assign the widget to a XENEON EDGE S slot.
 
 That's it. The widget starts showing live usage as soon as the service is running.
@@ -286,6 +297,16 @@ For a self-contained single-file executable:
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish\
 ```
 
+## Tests
+
+```powershell
+dotnet test tests\ClaudeUsageServer.Tests
+```
+
+The tests run fully offline: the Anthropic endpoints are stubbed and the credentials file is a temporary copy. They cover the credential state machine, the response cache, the token-refresh flow (success with write-back, rejected refresh token, server errors with fallback host, recovery after `claude login`), the HTTP endpoints including CORS and stale-cache fallback, and checks that no token ever appears in logs or `/status`.
+
+[CI](.github/workflows/ci.yml) runs the tests on every push and pull request, fails on NuGet packages with known vulnerabilities, and validates the widget with `icuewidget-cli`.
+
 ---
 
 ## MSI installer details
@@ -360,3 +381,13 @@ Change `Port` in `appsettings.json`, update the widget's hardcoded port referenc
 **Claude Code not installed or not authenticated**
 
 The service starts but `/status` returns `tokenValid: false`. Run `claude login`, then restart the service or wait up to ~500 ms for the `FileSystemWatcher` to pick up the new credentials file.
+
+---
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security model and how to report a vulnerability privately.
+
+## License
+
+[MIT](LICENSE). Free to use, modify, and share.

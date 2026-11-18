@@ -32,6 +32,16 @@ An ASP.NET Core Minimal API running as a Windows Service (`net10.0-windows`, `Mi
 
 ---
 
+### ClaudeUsageServer.Tests (`tests/ClaudeUsageServer.Tests/`)
+
+xUnit tests, fully offline: Anthropic endpoints are stubbed via a fake `IHttpClientFactory`, and the refresh-flow tests run the real `CredentialWatcherService` against a temporary credentials file. Endpoint tests use `WebApplicationFactory<Program>` with the hosted services removed, the `CredentialStore` seeded directly, and logging replaced by `NullLoggerFactory` so test runs never write to the real service log. Internals are visible to the test assembly via `InternalsVisibleTo`. The main project excludes `tests/**` through `DefaultItemExcludes`, because it sits at the repo root and would otherwise compile the test sources.
+
+Tests use `SENTINEL` inside every fake token so leak checks can assert it never appears in logs or `/status`. Keep that convention in new tests.
+
+**CI:** `.github/workflows/ci.yml` (windows-latest) runs the tests, fails on vulnerable NuGet packages (`dotnet list package --vulnerable --include-transitive`), and runs `icuewidget-cli` `validate` on the widget.
+
+---
+
 ### ClaudeUsageWidget (`widgets/ClaudeUsageWidget/`)
 
 An iCUE HTML widget targeting `dashboard_lcd` (Xeneon Edge). The widget is responsible for:
@@ -200,6 +210,12 @@ dotnet publish -c Release -r win-x64 --self-contained false -o publish\
 # Re-register (run as Administrator)
 sc.exe create ClaudeUsageServer binPath= "C:\full\path\to\publish\ClaudeUsageServer.exe" DisplayName= "Claude Usage Server" start= auto
 sc.exe start ClaudeUsageServer
+```
+
+### Run the automated tests
+
+```powershell
+dotnet test tests\ClaudeUsageServer.Tests
 ```
 
 ### Test the usage endpoint without the iCUE widget
