@@ -38,7 +38,7 @@ xUnit tests, fully offline: Anthropic endpoints are stubbed via a fake `IHttpCli
 
 Tests use `SENTINEL` inside every fake token so leak checks can assert it never appears in logs or `/status`. Keep that convention in new tests.
 
-**CI:** `.github/workflows/ci.yml` (windows-latest) runs the tests, fails on vulnerable NuGet packages (`dotnet list package --vulnerable --include-transitive`), and runs `icuewidget-cli` `validate` on the widget.
+**CI:** `.github/workflows/ci.yml` (windows-latest) runs the tests, fails on vulnerable NuGet packages (`dotnet list package --vulnerable --include-transitive`), and runs `icuewidget-cli` `validate` on the widget. It is a required status check on `main` ("Build, test, and validate"). `.github/workflows/scorecard.yml` runs OpenSSF Scorecard weekly and on push to `main`, publishing the README badge score; its actions are pinned to commit SHAs (the job must only use the actions Scorecard allows when `publish_results` is on).
 
 ---
 
