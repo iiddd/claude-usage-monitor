@@ -45,6 +45,8 @@ An iCUE HTML widget targeting `dashboard_lcd` (Xeneon Edge). The widget is respo
 
 **Preview harness:** `preview.html` is a standalone browser page that renders all four states (Normal, Critical, Error, Loading) side-by-side in scaled 840×344 iframes, each driven via postMessage from mock data. It requires no running service and is used for CSS/layout iteration without launching iCUE.
 
+**Network permission:** `manifest.json` must declare `{ "type": "url", "domain": "localhost", "port": 41920 }` in `permissions`. iCUE 5.52+ blocks every undeclared request with `net::ERR_ACCESS_DENIED` (the widget then shows "Service offline"), and rejects a `localhost` entry without `port` at import ("unsupported or corrupted widget"). On import iCUE asks the user to approve the permission; the user can revoke it later, which again surfaces as "Service offline".
+
 **Package artifact:** `widgets/claudeusage.icuewidget` is the ZIP-based package produced by `icuewidget package`, ready to import into iCUE.
 
 **Key dependencies:** vanilla ES5 JavaScript, no external libraries. CSS layout uses a single `--u` baseline variable scaled from `100vw / 840`. Localized into 12 languages via `translation.json`.
@@ -180,9 +182,10 @@ Setting it to `0` effectively disables caching (every request calls upstream).
 1. Edit `appsettings.json`: change `"Port": 41920` to the desired value.
 2. Edit `widgets/ClaudeUsageWidget/index.html`: change all occurrences of `41920` in the JavaScript (the `fetch` call and the loading subtitle) to the new port.
 3. Edit `widgets/ClaudeUsageWidget/preview.html`: update the port in mock fetch calls if present.
-4. Rebuild the server (`dotnet build`) and repackage the widget (`icuewidget package`).
-5. Reinstall the widget in iCUE so the updated package is picked up.
-6. Restart the Windows Service: `sc.exe stop ClaudeUsageServer && sc.exe start ClaudeUsageServer`.
+4. Edit `widgets/ClaudeUsageWidget/manifest.json`: change `port` in the `localhost` URL permission (otherwise iCUE blocks the fetch with `ERR_ACCESS_DENIED`).
+5. Rebuild the server (`dotnet build`) and repackage the widget (`icuewidget package`).
+6. Reinstall the widget in iCUE so the updated package is picked up (iCUE re-prompts for the new port permission).
+7. Restart the Windows Service: `sc.exe stop ClaudeUsageServer && sc.exe start ClaudeUsageServer`.
 
 ### Install / reinstall the Windows Service after a rebuild
 
@@ -231,7 +234,7 @@ Reinstalling replaces the existing widget; configured properties (port, interval
 icuewidget validate widgets/ClaudeUsageWidget
 ```
 
-Fix any reported errors before packaging. The `icuewidget` CLI must be installed — check with `icuewidget --version`.
+Fix any reported errors before packaging. The `icuewidget` CLI must be installed — check with `icuewidget --version`. Use `icuewidget-cli` ≥ 0.5 (`npm install -g icuewidget-cli`): it validates `manifest.permissions` and errors on `fetch()` calls to hosts no `url` permission covers. Older versions (0.2.x) pass a manifest that iCUE then rejects or blocks. 0.5 also enforces the `index.html` head rules iCUE needs: self-closed `<meta ... />` / `<link ... />`, ASCII-only head, and no literal head tag later in the file (the preview-mode template string in `index.html` splits it as `'<' + 'head>'`).
 
 ---
 
@@ -243,6 +246,7 @@ Fix any reported errors before packaging. The `icuewidget` CLI must be installed
 - **Port conflict.** If port 41920 is in use, Kestrel fails to bind and the service stops. Change `Port` in `appsettings.json` and update the widget's `serverPort` setting to match.
 - **Loopback only — enforced at startup.** The service asserts that Kestrel bound to `127.0.0.1` and will call `StopApplication()` if any other address is detected. Do not override the Kestrel binding via environment variables.
 - **Single device, single slot.** The widget is designed for `dashboard_lcd` at 840×344 (Xeneon Edge S-H). The `manifest.json` does not declare other device types or slots.
+- **Widget network access requires a manifest permission.** Since iCUE 5.52 (Widget API 1.9) widgets get no network access unless `manifest.json` declares it (spec: https://docs.elgato.com/icue/widgets/references/permissions). Symptom of a missing/denied permission: zero connections reach the service, and the widget DevTools console shows `net::ERR_ACCESS_DENIED` for every URL. To inspect the widget console, set the user env var `QTWEBENGINE_REMOTE_DEBUGGING=9222`, restart iCUE, open `http://localhost:9222` — and remove the variable afterwards. iCUE's own log (`%LOCALAPPDATA%\Corsair\Logs\CUE5\*.log`, logger `cue.mod.widgets.widget_parser`) states the exact reason when an import is rejected.
 - **No HTTPS on the proxy.** The server listens on plain HTTP (`http://127.0.0.1`). This is intentional for a localhost-only service; adding TLS is unnecessary and would complicate the iCUE widget's `fetch()` calls.
 
 ---

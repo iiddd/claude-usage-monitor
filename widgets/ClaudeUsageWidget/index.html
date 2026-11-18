@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 	<head>
-		<meta charset="UTF-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 		<title>tr('Claude Code Usage')</title>
-		<link rel="icon" type="image/svg+xml" href="resources/claude-usage.svg">
+		<link rel="icon" type="image/svg+xml" href="resources/claude-usage.svg"/>
 
-		<!-- ── Widget config ──────────────────────────────────────────── -->
+		<!-- == Widget config ============================================ -->
 
 		<meta
 			name="x-icue-property"
@@ -18,7 +18,7 @@
 			data-max="300"
 			data-step="10"
 			data-unit-label="'s'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -26,7 +26,7 @@
 			data-label="tr('Threshold Color Coding')"
 			data-type="switch"
 			data-default="true"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -34,7 +34,7 @@
 			data-label="tr('Text Color')"
 			data-type="color"
 			data-default="'#FFFFFF'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -42,7 +42,7 @@
 			data-label="tr('Block Color')"
 			data-type="color"
 			data-default="'#3B82F6'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -50,7 +50,7 @@
 			data-label="tr('Empty Block Color')"
 			data-type="color"
 			data-default="'#484848'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -58,7 +58,7 @@
 			data-label="tr('Percentage Color')"
 			data-type="color"
 			data-default="'#FFFFFF'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -66,7 +66,7 @@
 			data-label="tr('Low Color')"
 			data-type="color"
 			data-default="'#10B981'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -74,7 +74,7 @@
 			data-label="tr('Medium Color')"
 			data-type="color"
 			data-default="'#F59E0B'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -82,7 +82,7 @@
 			data-label="tr('High Color')"
 			data-type="color"
 			data-default="'#EF4444'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -90,7 +90,7 @@
 			data-label="tr('Background Color')"
 			data-type="color"
 			data-default="'#161616'"
-		>
+		/>
 
 		<meta
 			name="x-icue-property"
@@ -102,7 +102,7 @@
 			data-max="100"
 			data-step="1"
 			data-unit-label="'%'"
-		>
+		/>
 
 		<script type="application/json" id="x-icue-groups">
 		[
@@ -117,7 +117,7 @@
 		]
 		</script>
 
-		<link rel="stylesheet" type="text/css" href="styles/ClaudeUsage.css">
+		<link rel="stylesheet" type="text/css" href="styles/ClaudeUsage.css"/>
 	</head>
 	<body>
 		<div class="widget-background"></div>
@@ -313,8 +313,10 @@
 			if (typeof iCUE_initialized !== 'undefined') return;
 
 			var WIDGET_HTML = (
-				'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
-				'<link rel="stylesheet" href="styles/ClaudeUsage.css"></head><body>' +
+				// The head tags are split: iCUE finds the document head by plain text search
+				// and rejects the widget if the literal tag appears again later in the file.
+				'<!DOCTYPE html><html lang="en"><' + 'head><meta charset="UTF-8">' +
+				'<link rel="stylesheet" href="styles/ClaudeUsage.css"></' + 'head><body>' +
 				'<div class="widget-background"></div>' +
 				'<div class="cu-widget">' +
 				'<div id="status-dot" class="status-dot"></div>' +

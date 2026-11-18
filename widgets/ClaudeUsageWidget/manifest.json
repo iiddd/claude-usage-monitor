@@ -3,14 +3,22 @@
   "id": "com.andrey.claudeusage",
   "name": "Claude Code Usage",
   "description": "Displays Claude Code token usage for the 5-hour and 7-day windows.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "preview_icon": "resources/claude-usage.svg",
   "min_framework_version": "1.0.1",
+  "min_app_version": "5.52",
   "os": [
     { "platform": "windows" }
   ],
   "supported_devices": [
     { "type": "dashboard_lcd" }
   ],
-  "interactive": false
+  "interactive": false,
+  "permissions": [
+    {
+      "type": "url",
+      "domain": "localhost",
+      "port": 41920
+    }
+  ]
 }
