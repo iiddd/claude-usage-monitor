@@ -1,11 +1,12 @@
-/* Shared rendering module for Claude Code Usage widget.
-   Used by both index.html (iCUE widget) and preview iframes.
-   Polling, lifecycle, and config are owned by each host — this module only
-   reads/writes the DOM and formats values. */
+/**
+ * @fileoverview Shared rendering module for the Claude Code Usage widget, used by both
+ * index.html (iCUE widget) and the preview iframes. Polling, lifecycle and config are owned by
+ * each host; this module only reads and writes the DOM and formats values.
+ */
 (function (global) {
     'use strict';
 
-    // Active rendering config. All values are always concrete — defaults match the CSS theme.
+    /** Active rendering config. Every value is concrete; the defaults match the CSS theme. */
     var _cfg = {
         thresholdColorCoding: true,
         textColor:       '#FFFFFF',
@@ -19,10 +20,8 @@
         transparency:    0
     };
 
-    // Last successfully rendered data — re-applied when config changes mid-session.
+    /** Last successfully rendered data, re-applied when the config changes mid-session. */
     var _lastData = null;
-
-    // ── Color helpers ──────────────────────────────────────────────────
 
     function thresholdColor(utilization) {
         if (utilization < 0.6) return _cfg.colorLow;
@@ -38,7 +37,6 @@
         return _cfg.thresholdColorCoding ? thresholdColor(utilization) : _cfg.percentageColor;
     }
 
-    // ── Theme CSS variable application ─────────────────────────────────
 
     function applyThemeVars() {
         var root = document.documentElement;
@@ -47,7 +45,6 @@
         root.style.setProperty('--text-color',     _cfg.textColor);
     }
 
-    // ── Time formatting ────────────────────────────────────────────────
 
     function formatTimeUntil(resetsAt) {
         var diffMs = new Date(resetsAt).getTime() - Date.now();
@@ -65,9 +62,7 @@
         return totalMinutes + 'm';
     }
 
-    // ── Block rendering ────────────────────────────────────────────────
-
-    /* Returns a stable string key describing a block's visual state. */
+    /** Returns a stable string key describing a block's visual state. */
     function blockKey(i, threshold, color) {
         var fi = Math.floor(threshold);
         if (i < fi) return 'f:' + color;
@@ -76,7 +71,7 @@
         return 'e';
     }
 
-    /* Returns the CSS background value for a block state key. */
+    /** Returns the CSS background value for a block state key. */
     function blockBg(key) {
         if (key === 'e') return _cfg.emptyBlockColor;
         if (key.charAt(0) === 'f') return key.slice(2);
@@ -95,14 +90,15 @@
         }
     }
 
-    /*
+    /**
      * Diff-based block updater.
-     * - If utilization is unchanged from last call, does nothing.
+     * - If utilization is unchanged from the last call, does nothing.
      * - Otherwise, only transitions blocks whose visual state changed.
-     * - First render is instant (no animation).
-     * - Changed blocks: fade out (instant), swap background, fade in 400ms.
-     * - Single forced reflow per bar batches all block updates.
-     * - configure() clears prevUtil so a color-scheme change forces a full re-render.
+     * - The first render is instant (no animation).
+     * - Changed blocks fade out instantly, swap background, and fade in over 400 ms.
+     * - One forced reflow per bar batches all block updates.
+     * - configure() clears prevUtil, so after a color-scheme change the next call is a first
+     *   render; the previous color can therefore safely be computed from the current config.
      */
     function applyBlocks(barEl, utilization) {
         ensureBlocks(barEl);
@@ -116,8 +112,6 @@
 
         var color      = resolveBlockColor(utilization);
         var threshold  = utilization * 10;
-        // prevColor uses current _cfg — safe because configure() clears prevUtil,
-        // making isFirst=true after any color scheme change.
         var prevColor  = isFirst ? null : resolveBlockColor(prevUtil);
         var prevThresh = isFirst ? NaN  : prevUtil * 10;
 
@@ -144,8 +138,7 @@
 
         if (toAnimate.length === 0) return;
 
-        /* Single reflow so all blocks register opacity:0 before transition starts. */
-        void barEl.offsetWidth;
+        forceReflow(barEl);
 
         toAnimate.forEach(function (b) {
             b.style.transition = 'opacity 400ms ease-in-out';
@@ -153,7 +146,10 @@
         });
     }
 
-    // ── Row rendering ──────────────────────────────────────────────────
+    /** Forces one layout pass so every block registers opacity 0 before its transition starts. */
+    function forceReflow(el) {
+        void el.offsetWidth;
+    }
 
     function renderRow(barId, pctId, resetId, utilization, resetsAt) {
         var barEl   = document.getElementById(barId);
@@ -168,11 +164,9 @@
         resetEl.textContent = formatTimeUntil(resetsAt);
     }
 
-    // ── Public API ─────────────────────────────────────────────────────
-
-    /*
-     * Apply a new rendering config. Only keys present in opts are updated.
-     * Clears block caches and immediately re-renders if data is available,
+    /**
+     * Applies a new rendering config. Only keys present in opts are updated.
+     * Clears the block caches and re-renders at once if data is available,
      * so color scheme changes take effect without waiting for the next poll.
      */
     function configure(opts) {
@@ -184,15 +178,17 @@
         }
 
         applyThemeVars();
+        forgetRenderedUtilization();
 
-        // Clearing prevUtil forces applyBlocks to treat the next render as "first"
-        // so it re-computes block colors against the new _cfg.
+        if (_lastData) renderData(_lastData);
+    }
+
+    /** Makes applyBlocks treat the next render as a first render, recomputing every block color. */
+    function forgetRenderedUtilization() {
         var bars = document.querySelectorAll('.block-bar');
         for (var i = 0; i < bars.length; i++) {
             bars[i].dataset.prevUtil = '';
         }
-
-        if (_lastData) renderData(_lastData);
     }
 
     function renderData(data) {
@@ -209,11 +205,13 @@
             data.seven_day.utilization / 100, data.seven_day.resets_at);
     }
 
-    // Maps a state code to a distinct, actionable overlay. The vocabulary matches the
-    // service's /status states, plus 'service_offline' — which the host sets ONLY when the
-    // fetch itself fails (connection refused: the service is not running), as opposed to the
-    // service answering with an error state. 'reason' may be a function of an optional detail
-    // (used by upstream_error to surface the upstream HTTP status).
+    /**
+     * Maps a state code to a distinct, actionable overlay. The vocabulary matches the service's
+     * /status states, plus 'service_offline', which the host sets only when the fetch itself fails
+     * (connection refused: the service is not running), as opposed to the service answering with
+     * an error state. 'reason' may be a function of an optional detail (used by upstream_error to
+     * show the upstream HTTP status).
+     */
     var ERROR_STATES = {
         service_offline: {
             title:  'Service offline',
@@ -239,8 +237,11 @@
         }
     };
 
-    // message: a state code (see ERROR_STATES) or an unmapped raw string.
-    // detail: optional extra (e.g. the upstream HTTP status for upstream_error).
+    /**
+     * Shows the error overlay.
+     * @param {string} message A state code (see ERROR_STATES) or an unmapped raw string.
+     * @param {*} [detail] Optional extra, e.g. the upstream HTTP status for upstream_error.
+     */
     function renderError(message, detail) {
         var errorOverlay   = document.getElementById('error-overlay');
         var loadingOverlay = document.getElementById('loading-overlay');

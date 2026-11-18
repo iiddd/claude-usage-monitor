@@ -26,7 +26,6 @@
 				margin-bottom: 32px;
 			}
 
-			/* Scale each 840×344 frame to viewport width */
 			.frame-scaler {
 				width: 100%;
 				max-width: 840px;
@@ -52,9 +51,7 @@
 		<div id="states"></div>
 
 		<script>
-		/* Each frame hosts the full widget DOM isolated via srcdoc.
-		   After load, a postMessage drives it into the desired state. */
-
+		/** The full widget DOM, isolated in each frame via srcdoc; after load a postMessage drives it into the desired state. */
 		var WIDGET_SRCDOC = '<!DOCTYPE html>\n' +
 		'<html lang="en">\n' +
 		'<head>\n' +
@@ -195,7 +192,7 @@
 			container.appendChild(wrap);
 		});
 
-		/* Scale iframes to fit their container on load and resize. */
+		/** Scales an iframe to fit its container; runs on load and on resize. */
 		function scaleFrame(iframe, scaler) {
 			var containerWidth = scaler.offsetWidth;
 			var scale = containerWidth / 840;

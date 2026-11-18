@@ -151,7 +151,6 @@ public class EndpointTests
         Assert.DoesNotContain("SENTINEL", body);
     }
 
-    // ── Rate limiting (HTTP 429) ───────────────────────────────────────────
 
     [Fact]
     public async Task Rate_limit_pauses_upstream_calls_until_backoff_elapses()
@@ -171,24 +170,22 @@ public class EndpointTests
             Assert.Equal(TimeSpan.FromSeconds(60), first.Headers.RetryAfter?.Delta);
         }
 
-        // Inside the backoff window: answered locally, Anthropic is not called again.
         time.Advance(TimeSpan.FromSeconds(30));
-        using (var during = await client.GetAsync("/usage"))
+        using (var withinBackoff = await client.GetAsync("/usage"))
         {
-            Assert.Equal(HttpStatusCode.TooManyRequests, during.StatusCode);
-            Assert.Equal(TimeSpan.FromSeconds(30), during.Headers.RetryAfter?.Delta);
+            Assert.Equal(HttpStatusCode.TooManyRequests, withinBackoff.StatusCode);
+            Assert.Equal(TimeSpan.FromSeconds(30), withinBackoff.Headers.RetryAfter?.Delta);
         }
         Assert.Single(upstream.Requests);
 
-        // Second 429 doubles the backoff to two minutes.
         time.Advance(TimeSpan.FromSeconds(30));
-        using (var second = await client.GetAsync("/usage"))
-            Assert.Equal(TimeSpan.FromMinutes(2), second.Headers.RetryAfter?.Delta);
+        using (var secondRateLimit = await client.GetAsync("/usage"))
+            Assert.Equal(TimeSpan.FromMinutes(2), secondRateLimit.Headers.RetryAfter?.Delta);
         Assert.Equal(2, upstream.Requests.Count);
 
-        // After the backoff, a successful call clears it.
         time.Advance(TimeSpan.FromMinutes(2));
-        Assert.Equal(UsageJson, await client.GetStringAsync("/usage"));
+        var afterBackoff = await client.GetStringAsync("/usage");
+        Assert.Equal(UsageJson, afterBackoff);
         using var status = JsonDocument.Parse(await client.GetStringAsync("/status"));
         Assert.Equal("ok", status.RootElement.GetProperty("state").GetString());
         Assert.Equal(JsonValueKind.Null, status.RootElement.GetProperty("upstreamRetryAt").ValueKind);
@@ -216,7 +213,8 @@ public class EndpointTests
             Assert.Equal("true", response.Headers.GetValues("X-Cache-Stale").Single());
             Assert.NotNull(response.Headers.RetryAfter);
         }
-        Assert.Equal(2, upstream.Requests.Count); // one success, one 429, then paused
+        var successThenRateLimit = 2;
+        Assert.Equal(successThenRateLimit, upstream.Requests.Count);
 
         using var status = JsonDocument.Parse(await client.GetStringAsync("/status"));
         Assert.Equal("upstream_error", status.RootElement.GetProperty("state").GetString());
@@ -258,14 +256,14 @@ public class EndpointTests
         var first = client.GetStringAsync("/usage");
         var second = client.GetStringAsync("/usage");
         await Wait.UntilAsync(() => upstream.Requests.Count == 1, "the first request reaches upstream");
-        await Task.Delay(100); // give the second request time to (wrongly) call upstream too
+        await Task.Delay(TimeForSecondRequestToReachUpstream);
         release.SetResult();
 
         Assert.Equal(new[] { UsageJson, UsageJson }, await Task.WhenAll(first, second));
         Assert.Single(upstream.Requests);
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────
+    private static readonly TimeSpan TimeForSecondRequestToReachUpstream = TimeSpan.FromMilliseconds(100);
 
     private static void SeedValidToken(CredentialStore store) =>
         store.Update(AccessToken, "refresh-SENTINEL", DateTimeOffset.UtcNow.AddHours(1));
@@ -286,18 +284,9 @@ public class EndpointTests
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
             {
-                // No background work: the watcher would read the real credentials file and the
-                // cleanup service would touch the real log directory.
-                services.RemoveAll<CredentialStore>();
-                foreach (var hosted in services
-                             .Where(d => d.ServiceType == typeof(IHostedService) &&
-                                         (d.ImplementationType == typeof(CredentialWatcherService) ||
-                                          d.ImplementationType == typeof(LogCleanupService)))
-                             .ToList())
-                {
-                    services.Remove(hosted);
-                }
+                RemoveBackgroundServices(services);
 
+                services.RemoveAll<CredentialStore>();
                 var store = new CredentialStore();
                 seed(store);
                 services.AddSingleton(store);
@@ -310,9 +299,30 @@ public class EndpointTests
                     services.AddSingleton(time);
                 }
 
-                // Keep test runs out of the service's real log files.
-                services.RemoveAll<ILoggerFactory>();
-                services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+                DiscardLogging(services);
             }));
+    }
+
+    /// <summary>
+    /// Removes the hosted services: the watcher would read the real credentials file and the
+    /// cleanup service would touch the real log directory.
+    /// </summary>
+    private static void RemoveBackgroundServices(IServiceCollection services)
+    {
+        foreach (var hosted in services
+                     .Where(d => d.ServiceType == typeof(IHostedService) &&
+                                 (d.ImplementationType == typeof(CredentialWatcherService) ||
+                                  d.ImplementationType == typeof(LogCleanupService)))
+                     .ToList())
+        {
+            services.Remove(hosted);
+        }
+    }
+
+    /// <summary>Keeps test runs out of the service's real log files.</summary>
+    private static void DiscardLogging(IServiceCollection services)
+    {
+        services.RemoveAll<ILoggerFactory>();
+        services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
     }
 }

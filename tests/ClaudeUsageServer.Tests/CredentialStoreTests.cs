@@ -159,7 +159,7 @@ public class CredentialStoreTests
         store.SetTransitionListener((o, n, _) => transitions.Add((o, n)));
 
         store.Update(AccessToken, RefreshToken, InOneHour);
-        store.MarkUpstreamHealthy(); // already healthy: no state change
+        store.MarkUpstreamHealthy();
 
         Assert.Single(transitions);
         Assert.Equal("ok", transitions[0].New);

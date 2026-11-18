@@ -6,8 +6,6 @@
 		<title>tr('Claude Code Usage')</title>
 		<link rel="icon" type="image/svg+xml" href="resources/claude-usage.svg"/>
 
-		<!-- == Widget config ============================================ -->
-
 		<meta
 			name="x-icue-property"
 			content="refreshInterval"
@@ -124,10 +122,8 @@
 
 		<div class="cu-widget">
 
-			<!-- ── Stale cache indicator ──────────────────────────────── -->
 			<div id="status-dot" class="status-dot"></div>
 
-			<!-- ── 5h row ─────────────────────────────────────────────── -->
 			<div class="usage-row">
 				<div class="label-zone">
 					<svg class="label-icon" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -147,7 +143,6 @@
 
 			<div class="row-divider"></div>
 
-			<!-- ── 7d row ─────────────────────────────────────────────── -->
 			<div class="usage-row">
 				<div class="label-zone">
 					<svg class="label-icon" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -166,13 +161,11 @@
 				</div>
 			</div>
 
-			<!-- ── Loading overlay ────────────────────────────────────── -->
 			<div class="loading-overlay" id="loading-overlay">
 				<div class="loading-title">Loading usage data...</div>
 				<div class="loading-subtitle">contacting localhost:41920</div>
 			</div>
 
-			<!-- ── Error overlay ──────────────────────────────────────── -->
 			<div class="error-overlay" id="error-overlay">
 				<div class="error-title" id="error-title">Unable to fetch usage</div>
 				<div class="error-reason" id="error-reason"></div>
@@ -192,13 +185,15 @@
 		var activeInterval = 60;
 		var lastResetsAt   = { fiveHour: null, sevenDay: null };
 
-		// ── iCUE lifecycle ───────────────────────────────────────────
-
 		function onIcueInitialized() {
 			resolveConfig();
 			ClaudeUsage.renderLoading();
 			startPolling();
 			startResetTimer();
+		}
+
+		function iCueAlreadyInitialized() {
+			return typeof iCUE_initialized !== 'undefined' && iCUE_initialized;
 		}
 
 		function onIcueDataUpdated() {
@@ -209,12 +204,9 @@
 			}
 		}
 
-		// Guard: iCUE may already be initialized before this script runs.
-		if (typeof iCUE_initialized !== 'undefined' && iCUE_initialized) {
+		if (iCueAlreadyInitialized()) {
 			onIcueInitialized();
 		}
-
-		// ── Config resolution ────────────────────────────────────────
 
 		function resolveConfig() {
 			var n = parseInt(typeof refreshInterval !== 'undefined' ? refreshInterval : 60, 10);
@@ -234,8 +226,6 @@
 			});
 		}
 
-		// ── Polling ──────────────────────────────────────────────────
-
 		function startPolling() {
 			fetchUsage();
 			pollTimer = setInterval(fetchUsage, activeInterval * 1000);
@@ -250,9 +240,6 @@
 			resolveConfig();
 			var isStaleResponse = false;
 
-			// A fetch rejection means the request never reached the service (connection
-			// refused / offline) — distinct from the service answering with an error body.
-			// The former carries no `.code`; the latter carries the /status state code.
 			fetch('http://localhost:41920/usage')
 			.then(function (r) {
 				isStaleResponse = r.headers.get('X-Cache-Stale') === 'true';
@@ -273,20 +260,24 @@
 				ClaudeUsage.renderStale(isStaleResponse);
 				ClaudeUsage.renderData(data);
 			})
-			.catch(function (err) {
-				ClaudeUsage.renderStale(false);
-				if (err && err.code) {
-					// Service answered with an error state — render its specific message.
-					ClaudeUsage.renderError(err.code, err.status);
-				} else {
-					// Fetch itself failed — the service is not running.
-					ClaudeUsage.renderError('service_offline');
-				}
-			});
+			.catch(renderFailure);
 		}
 
-		// ── Reset-time countdown (refreshes every 30 s without re-fetching) ──
+		/**
+		 * Shows why usage could not be displayed. A fetch rejection means the request never
+		 * reached the service (connection refused: the service is not running) and carries no
+		 * code; an error answer from the service carries its /status state code.
+		 */
+		function renderFailure(err) {
+			ClaudeUsage.renderStale(false);
+			if (err && err.code) {
+				ClaudeUsage.renderError(err.code, err.status);
+			} else {
+				ClaudeUsage.renderError('service_offline');
+			}
+		}
 
+		/** Refreshes the reset countdowns every 30 s without re-fetching; fetches again once a window has reset. */
 		function startResetTimer() {
 			if (resetTimer) clearInterval(resetTimer);
 			resetTimer = setInterval(function () {
@@ -306,17 +297,24 @@
 			}, 30000);
 		}
 
-		// ── Preview mode (no iCUE runtime detected) ──────────────────
-		// Renders all four design states stacked for browser-based review.
-
 		window.addEventListener('DOMContentLoaded', function () {
-			if (typeof iCUE_initialized !== 'undefined') return;
+			if (typeof iCUE_initialized === 'undefined') renderPreviewStates();
+		});
 
+		/**
+		 * Builds a head tag without writing it literally: iCUE finds the document head by plain text
+		 * search and rejects the widget if the tag appears again later in the file.
+		 * @param {string} slash '' for the opening tag, '/' for the closing one.
+		 */
+		function headTag(slash) {
+			return '<' + slash + 'head>';
+		}
+
+		/** Preview mode (no iCUE runtime detected): renders all four design states stacked for browser review. */
+		function renderPreviewStates() {
 			var WIDGET_HTML = (
-				// The head tags are split: iCUE finds the document head by plain text search
-				// and rejects the widget if the literal tag appears again later in the file.
-				'<!DOCTYPE html><html lang="en"><' + 'head><meta charset="UTF-8">' +
-				'<link rel="stylesheet" href="styles/ClaudeUsage.css"></' + 'head><body>' +
+				'<!DOCTYPE html><html lang="en">' + headTag('') + '<meta charset="UTF-8">' +
+				'<link rel="stylesheet" href="styles/ClaudeUsage.css">' + headTag('/') + '<body>' +
 				'<div class="widget-background"></div>' +
 				'<div class="cu-widget">' +
 				'<div id="status-dot" class="status-dot"></div>' +
@@ -475,7 +473,7 @@
 					p.frame.style.transform = 'scale(' + (p.scaler.offsetWidth / 840) + ')';
 				});
 			});
-		});
+		}
 		</script>
 	</body>
 </html>

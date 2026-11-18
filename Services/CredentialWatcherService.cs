@@ -9,10 +9,10 @@ namespace ClaudeUsageServer.Services;
 
 internal sealed class CredentialWatcherService : BackgroundService
 {
-    // Public OAuth client id the Claude Code CLI itself uses for its token grants.
+    /// <summary>Public OAuth client id the Claude Code CLI itself uses for its token grants.</summary>
     private const string ClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
-    // The CLI tries the platform host first and falls back to the legacy console host.
+    /// <summary>Token hosts in the order the CLI tries them: the platform host, then the legacy console host.</summary>
     private static readonly string[] TokenEndpoints =
     {
         "https://platform.claude.com/v1/oauth/token",
@@ -26,17 +26,25 @@ internal sealed class CredentialWatcherService : BackgroundService
     private FileSystemWatcher? _watcher;
     private bool _reauthWarningLogged;
 
-    // FSW change events fired within this window of our own write are our own echo; ignore them.
+    /// <summary>How long a credentials file change may still be mid-write when the watcher reports it.</summary>
+    private static readonly TimeSpan WriteSettleDelay = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>Window after our own write-back during which watcher events are treated as its echo.</summary>
+    private static readonly TimeSpan OwnWriteEchoWindow = TimeSpan.FromSeconds(2);
+
+    /// <summary>Watcher events fired before this time (UTC ticks) are the echo of our own write-back.</summary>
     private long _suppressReloadUntilTicks;
 
-    // Capacity-1 channel: multiple rapid FSW events collapse into one reload signal.
+    /// <summary>Capacity-1 channel: several rapid watcher events collapse into one reload signal.</summary>
     private readonly Channel<bool> _reloadSignal = Channel.CreateBounded<bool>(
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest });
 
     private enum RefreshResult { Success, InvalidGrant, TransientFailure }
 
-    // Outcome of one refresh grant, carrying just enough (never token material, never a raw
-    // body) to log a diagnostic line and set the machine-readable lastRefreshError.
+    /// <summary>
+    /// Outcome of one refresh grant, carrying just enough (never token material, never a raw
+    /// body) to log a diagnostic line and set the machine-readable <c>lastRefreshError</c>.
+    /// </summary>
     private readonly record struct RefreshOutcome(
         RefreshResult Result,
         int? HttpStatus,
@@ -45,7 +53,7 @@ internal sealed class CredentialWatcherService : BackgroundService
         bool RefreshTokenRotated,
         DateTimeOffset? NewExpiresAt)
     {
-        // Short machine-readable reason string stored as lastRefreshError.
+        /// <summary>Short machine-readable reason stored as <c>lastRefreshError</c>.</summary>
         public string Reason => OAuthError
             ?? (HttpStatus is not null ? "http_" + HttpStatus : null)
             ?? ExceptionType
@@ -64,11 +72,15 @@ internal sealed class CredentialWatcherService : BackgroundService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Loads the credentials, then keeps the token fresh: waits until the refresh window opens
+    /// (or the file changes) and runs a refresh grant. While re-authentication is required no
+    /// grant is attempted, since only a fresh <c>claude login</c>, arriving as a file change, can help.
+    /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ClaudeUsageServer starting");
 
-        // Diagnostic state-transition breadcrumbs (Debug — only surface under DiagnosticLogging).
         _store.SetTransitionListener((oldState, newState, reason) =>
             _logger.LogDebug("state transition {Old} -> {New} reason={Reason}", oldState, newState, reason));
 
@@ -79,12 +91,9 @@ internal sealed class CredentialWatcherService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Reauth required: the refresh token is dead. Retrying the grant cannot help —
-            // only a fresh `claude login` can, which arrives as a file change. Park here.
             if (_store.ReauthRequired)
             {
-                try { await _reloadSignal.Reader.ReadAsync(stoppingToken); }
-                catch (OperationCanceledException) { break; }
+                if (!await CredentialsChangedAsync(stoppingToken)) break;
                 continue;
             }
 
@@ -99,27 +108,13 @@ internal sealed class CredentialWatcherService : BackgroundService
                         DateTimeOffset.UtcNow + timeUntilRefresh, timeUntilRefresh.TotalMinutes,
                         _store.ExpiresAt, buffer);
 
-                // Wait until the refresh window opens, but yield early if FSW fires.
-                try
-                {
-                    using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    waitCts.CancelAfter(timeUntilRefresh);
-                    await _reloadSignal.Reader.ReadAsync(waitCts.Token);
-                    // FSW fired: credentials already reloaded inside the handler — restart loop.
-                    continue;
-                }
-                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
-                {
-                    // Timeout reached: fall through to refresh (a scheduled proactive refresh).
-                    await TryRefreshWithRetryAsync("scheduled", stoppingToken);
-                    continue;
-                }
+                if (await CredentialsChangedWithinAsync(timeUntilRefresh, stoppingToken)) continue;
+                await TryRefreshWithRetryAsync("scheduled", stoppingToken);
             }
-
-            if (!stoppingToken.IsCancellationRequested)
-                // Reached the refresh path without waiting: the token was already inside the
-                // buffer window (or expired) at loop entry — treat as a startup/overdue refresh.
+            else
+            {
                 await TryRefreshWithRetryAsync("startup-expired", stoppingToken);
+            }
         }
 
         _logger.LogInformation("ClaudeUsageServer stopping");
@@ -131,7 +126,43 @@ internal sealed class CredentialWatcherService : BackgroundService
         base.Dispose();
     }
 
-    // Short correlation id tying together all log lines of one operation (reload / refresh cycle).
+    /// <summary>
+    /// Waits for the file watcher to report reloaded credentials. Returns false when the service
+    /// is stopping instead.
+    /// </summary>
+    private async Task<bool> CredentialsChangedAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await _reloadSignal.Reader.ReadAsync(stoppingToken);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Waits up to <paramref name="timeout"/> for the file watcher to report reloaded credentials.
+    /// Returns true when they changed (already reloaded by the watcher), false when the time ran out.
+    /// </summary>
+    private async Task<bool> CredentialsChangedWithinAsync(TimeSpan timeout, CancellationToken stoppingToken)
+    {
+        try
+        {
+            using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            waitCts.CancelAfter(timeout);
+            await _reloadSignal.Reader.ReadAsync(waitCts.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Short correlation id tying together the log lines of one reload or refresh cycle.</summary>
     private static string NewCid() => Guid.NewGuid().ToString("N")[..8];
 
     /// <summary>
@@ -154,8 +185,10 @@ internal sealed class CredentialWatcherService : BackgroundService
             o.DiagnosticLogging, _store.FileFound, status.ExpiresAt ?? "none", status.State);
     }
 
-    // ── Credential loading ─────────────────────────────────────────────────
-
+    /// <summary>
+    /// Reads the credentials file into the store. The log line records only whether each token is
+    /// present, never the values, lengths or prefixes of any token.
+    /// </summary>
     private async Task TryLoadCredentialsAsync(string cid)
     {
         var path = _options.CurrentValue.ResolvedCredentialsPath;
@@ -174,7 +207,6 @@ internal sealed class CredentialWatcherService : BackgroundService
                 ? DateTimeOffset.FromUnixTimeMilliseconds(oauth.ExpiresAt)
                 : (DateTimeOffset?)null;
 
-            // Booleans only — NEVER the values, lengths, or prefixes of any token.
             _logger.LogDebug(
                 "[{Cid}] credentials read: lastWriteUtc={LastWrite:O} expiresAt={ExpiresAt} hasAccessToken={HasAccess} hasRefreshToken={HasRefresh}",
                 cid, lastWrite, expiresAt?.ToString("O") ?? "none",
@@ -213,7 +245,7 @@ internal sealed class CredentialWatcherService : BackgroundService
         }
     }
 
-    // Retries up to 3 times with a short delay to handle write-lock races.
+    /// <summary>Reads the file, retrying up to 3 times with a short delay to ride out write-lock races.</summary>
     private static async Task<string> ReadWithRetryAsync(string path)
     {
         IOException? last = null;
@@ -229,18 +261,18 @@ internal sealed class CredentialWatcherService : BackgroundService
         throw last!;
     }
 
-    // ── Token refresh ──────────────────────────────────────────────────────
-
+    /// <summary>
+    /// Runs refresh grants until one succeeds, the refresh token is rejected (retrying cannot
+    /// revive it), or the token no longer needs refreshing. Transient failures (network, 5xx) are
+    /// retried every <c>RetryIntervalSeconds</c>; a file change can end the wait early.
+    /// </summary>
     private async Task TryRefreshWithRetryAsync(string trigger, CancellationToken stoppingToken)
     {
         var cid = NewCid();
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Exit if the token now has ample time remaining (e.g. FSW delivered a fresh token
-            // during the retry wait). Do NOT exit merely because the token is still technically
-            // non-expired — we may be in the buffer window and a proactive refresh is needed.
-            if (_store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero)
+            if (TokenOutsideRefreshWindow())
                 return;
 
             var attempt = _store.ConsecutiveFailures + 1;
@@ -257,9 +289,7 @@ internal sealed class CredentialWatcherService : BackgroundService
             }
             finally
             {
-                // Safety: if some path left _refreshing set, clear it (no-op if already cleared).
-                if (_store.ReauthRequired is false)
-                    _store.SetRefreshing(false);
+                ClearRefreshingFlag();
             }
 
             if (outcome.Result == RefreshResult.Success)
@@ -284,10 +314,9 @@ internal sealed class CredentialWatcherService : BackgroundService
                         "Refresh token is expired or revoked — re-authentication required. " +
                         "Run `claude login` in a terminal to restore access.");
                 }
-                return; // Do not retry: the refresh token will not become valid by retrying.
+                return;
             }
 
-            // Transient (network / 5xx): record the failure and when the next retry is due.
             var retrySeconds = _options.CurrentValue.RetryIntervalSeconds;
             var nextRetryAt = DateTimeOffset.UtcNow.AddSeconds(retrySeconds);
             _store.MarkRefreshFailed(outcome.Reason, nextRetryAt);
@@ -299,27 +328,35 @@ internal sealed class CredentialWatcherService : BackgroundService
             _logger.LogWarning(
                 "Token refresh failed (network/transient), retrying in {Seconds}s", retrySeconds);
 
-            // Wait the retry interval; FSW can interrupt if it delivers a fresh token.
-            try
-            {
-                using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                retryCts.CancelAfter(TimeSpan.FromSeconds(retrySeconds));
-                await _reloadSignal.Reader.ReadAsync(retryCts.Token);
-                // If FSW delivered a fresh token with ample lifetime, exit the retry loop.
-                if (_store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero)
-                    return;
-            }
-            catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
-            {
-                // Retry interval elapsed.
-            }
+            await CredentialsChangedWithinAsync(TimeSpan.FromSeconds(retrySeconds), stoppingToken);
         }
+    }
+
+    /// <summary>
+    /// True when the token has time left before its refresh window opens, e.g. because the file
+    /// watcher delivered a fresh token. A token that is merely unexpired does not count: inside the
+    /// buffer window a proactive refresh is still due.
+    /// </summary>
+    private bool TokenOutsideRefreshWindow() =>
+        _store.GetTimeUntilRefresh(_options.CurrentValue.RefreshBufferMinutes) > TimeSpan.Zero;
+
+    /// <summary>
+    /// Safety net after a grant: clears the in-flight flag in case some path left it set.
+    /// A no-op when it is already clear or re-authentication is required.
+    /// </summary>
+    private void ClearRefreshingFlag()
+    {
+        if (!_store.ReauthRequired)
+            _store.SetRefreshing(false);
     }
 
     /// <summary>
     /// Performs a direct OAuth <c>refresh_token</c> grant against the token endpoint (with a
     /// legacy-host fallback). This consumes no Claude usage. On success the rotated tokens are
-    /// written back to the credentials file and loaded into the store.
+    /// written back to the credentials file and loaded into the store; a response without a new
+    /// refresh token keeps the current one. A 4xx means the grant was rejected and retrying cannot
+    /// help; a 5xx or network error moves on to the next host. Without a refresh token on hand
+    /// only a fresh login can help, so that also counts as a rejected grant.
     /// </summary>
     private async Task<RefreshOutcome> RefreshAccessTokenAsync(string cid, CancellationToken stoppingToken)
     {
@@ -334,7 +371,6 @@ internal sealed class CredentialWatcherService : BackgroundService
 
             if (!_store.TryCreateRefreshContent(ClientId, out var content) || content is null)
             {
-                // No refresh token on hand — a fresh login is the only path forward.
                 return new RefreshOutcome(
                     RefreshResult.InvalidGrant, null, "no_refresh_token", null, false, null);
             }
@@ -367,7 +403,6 @@ internal sealed class CredentialWatcherService : BackgroundService
                         parsed.ExpiresIn > 0 ? parsed.ExpiresIn : 28800);
                     bool rotated = !string.IsNullOrEmpty(parsed.RefreshToken);
 
-                    // Rotation: prefer the new refresh token, keep the old one if none returned.
                     _store.UpdateFromRefresh(parsed.AccessToken, parsed.RefreshToken, expiresAt);
 
                     await WriteCredentialsFileAsync(
@@ -377,8 +412,7 @@ internal sealed class CredentialWatcherService : BackgroundService
                         RefreshResult.Success, (int)response.StatusCode, null, null, rotated, expiresAt);
                 }
 
-                // 4xx → client-side failure (invalid/revoked grant). Retrying will not help.
-                if ((int)response.StatusCode is >= 400 and < 500)
+                if (IsClientError(response.StatusCode))
                 {
                     var code = TryReadErrorCode(body);
                     _logger.LogWarning(
@@ -390,7 +424,6 @@ internal sealed class CredentialWatcherService : BackgroundService
                         code ?? "invalid_grant", null, false, null);
                 }
 
-                // 5xx → server-side transient; try the fallback host, else retry later.
                 _logger.LogWarning("Refresh endpoint returned HTTP {StatusCode}", (int)response.StatusCode);
                 aggregate = new RefreshOutcome(
                     RefreshResult.TransientFailure, (int)response.StatusCode, null, null, false, null);
@@ -410,7 +443,12 @@ internal sealed class CredentialWatcherService : BackgroundService
         return aggregate;
     }
 
-    // Reads only the machine-readable error code; never logs the raw body (may echo a token).
+    private static bool IsClientError(System.Net.HttpStatusCode status) => (int)status is >= 400 and < 500;
+
+    /// <summary>
+    /// Reads only the machine-readable OAuth error code from a grant response. The raw body is
+    /// never logged, because a misbehaving server may echo a token in it.
+    /// </summary>
     private static string? TryReadErrorCode(string body)
     {
         try
@@ -421,13 +459,12 @@ internal sealed class CredentialWatcherService : BackgroundService
         catch { return null; }
     }
 
-    // ── Credentials file write-back (atomic, permission-preserving) ─────────
-
     /// <summary>
     /// Writes the refreshed tokens back into the credentials file in the exact structure
     /// Claude Code expects, preserving every field the service does not manage. Uses a
-    /// temp-file + rename to avoid a torn write, and copies the original file's ACL onto
-    /// the replacement so restrictive permissions survive.
+    /// temp-file + rename (same volume) to avoid a torn write, and copies the original file's ACL
+    /// onto the replacement so restrictive permissions survive. If the write fails, the in-memory
+    /// tokens still serve the widget this session; Claude Code may refresh again on its own.
     /// </summary>
     private async Task WriteCredentialsFileAsync(
         string cid, string accessToken, string? refreshToken, long expiresAtMs)
@@ -442,18 +479,7 @@ internal sealed class CredentialWatcherService : BackgroundService
 
         try
         {
-            // Load the existing document so unmanaged fields (refreshTokenExpiresAt, scopes,
-            // subscriptionType, rateLimitTier, …) round-trip untouched.
-            JsonObject root;
-            if (File.Exists(path))
-            {
-                var existing = await File.ReadAllTextAsync(path);
-                root = JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
-            }
-            else
-            {
-                root = new JsonObject();
-            }
+            var root = await LoadCredentialsDocumentAsync(path);
 
             if (root["claudeAiOauth"] is not JsonObject oauth)
             {
@@ -467,31 +493,47 @@ internal sealed class CredentialWatcherService : BackgroundService
 
             var serialized = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
 
-            // Mark our own imminent write so the FSW echo is ignored.
-            Interlocked.Exchange(
-                ref _suppressReloadUntilTicks,
-                DateTimeOffset.UtcNow.AddSeconds(2).UtcTicks);
+            SuppressReloadEchoOfOwnWrite();
 
             var tmp = path + ".tmp";
             await File.WriteAllTextAsync(tmp, serialized);
             CopyAclIfPresent(path, tmp);
 
-            // Atomic replace (same volume). Overwrite in case a stale temp exists.
             File.Move(tmp, path, overwrite: true);
 
-            _logger.LogDebug("[{Cid}] credentials file write-back complete (FSW echo suppressed 2s)", cid);
+            _logger.LogDebug("[{Cid}] credentials file write-back complete (FSW echo suppressed {Seconds}s)", cid, OwnWriteEchoWindow.TotalSeconds);
             _logger.LogInformation("Credentials file updated with refreshed token");
         }
         catch (Exception ex)
         {
-            // In-memory tokens are already updated, so the widget keeps working this session;
-            // Claude Code may need to refresh again on its own if the on-disk copy is stale.
             _logger.LogError("Failed to write refreshed credentials to disk: {Reason}", ex.Message);
         }
     }
 
-    // Copies owner + DACL from the original file onto the replacement so restrictive
-    // permissions are preserved. Best-effort: never fails the write.
+    /// <summary>
+    /// Loads the existing credentials document so fields the service does not manage
+    /// (<c>refreshTokenExpiresAt</c>, <c>scopes</c>, <c>subscriptionType</c>, …) round-trip untouched.
+    /// </summary>
+    private static async Task<JsonObject> LoadCredentialsDocumentAsync(string path)
+    {
+        if (!File.Exists(path)) return new JsonObject();
+
+        var existing = await File.ReadAllTextAsync(path);
+        return JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
+    }
+
+    private void SuppressReloadEchoOfOwnWrite() =>
+        Interlocked.Exchange(
+            ref _suppressReloadUntilTicks,
+            DateTimeOffset.UtcNow.Add(OwnWriteEchoWindow).UtcTicks);
+
+    private bool IsEchoOfOwnWrite() =>
+        DateTimeOffset.UtcNow.UtcTicks < Interlocked.Read(ref _suppressReloadUntilTicks);
+
+    /// <summary>
+    /// Copies owner and DACL from the original file onto the replacement so restrictive
+    /// permissions are preserved. Best-effort: never fails the write.
+    /// </summary>
     private void CopyAclIfPresent(string sourcePath, string targetPath)
     {
         if (!OperatingSystem.IsWindows() || !File.Exists(sourcePath)) return;
@@ -509,8 +551,6 @@ internal sealed class CredentialWatcherService : BackgroundService
             _logger.LogDebug("Could not copy credentials file ACL: {Reason}", ex.Message);
         }
     }
-
-    // ── FileSystemWatcher ──────────────────────────────────────────────────
 
     private void SetupFileWatcher()
     {
@@ -542,12 +582,9 @@ internal sealed class CredentialWatcherService : BackgroundService
         {
             var cid = NewCid();
 
-            // Debounce: the file may still be mid-write.
-            await Task.Delay(500);
+            await Task.Delay(WriteSettleDelay);
 
-            // Ignore the echo of our own atomic write-back.
-            var suppressUntil = Interlocked.Read(ref _suppressReloadUntilTicks);
-            if (DateTimeOffset.UtcNow.UtcTicks < suppressUntil)
+            if (IsEchoOfOwnWrite())
             {
                 _logger.LogDebug(
                     "[{Cid}] FSW event {ChangeType}: ignored (self-write echo)", cid, e.ChangeType);

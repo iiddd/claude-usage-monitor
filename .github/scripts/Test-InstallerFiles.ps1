@@ -5,7 +5,7 @@
 .DESCRIPTION
     Package.wxs lists every installed file by hand. A dependency update that adds a DLL would
     otherwise produce an MSI that silently lacks it, and the service would crash at runtime.
-    Files that are published but intentionally not installed go in $Ignored.
+    Files that are published but intentionally not installed go in $Ignored, keyed by name with the reason.
 #>
 param(
     [string]$PublishDir = 'publish',
@@ -14,17 +14,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Published but deliberately not installed.
-$Ignored = @(
-    'web.config',                                       # IIS only
-    'ClaudeUsageServer.staticwebassets.endpoints.json', # no static web assets are served
-    'ClaudeUsageServer.pdb'                             # debug symbols
-)
+$Ignored = @{
+    'web.config'                                       = 'IIS only'
+    'ClaudeUsageServer.staticwebassets.endpoints.json' = 'no static web assets are served'
+    'ClaudeUsageServer.pdb'                            = 'debug symbols'
+}
 
 $root = (Resolve-Path $PublishDir).Path.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 $published = Get-ChildItem -Path $PublishDir -File -Recurse |
     ForEach-Object { $_.FullName.Substring($root.Length) } |
-    Where-Object { $_ -notin $Ignored -and $_ -notlike 'appsettings.*.json' } |
+    Where-Object { -not $Ignored.ContainsKey($_) -and $_ -notlike 'appsettings.*.json' } |
     Sort-Object
 
 $listed = [regex]::Matches((Get-Content $PackageWxs -Raw), 'Source="\$\(var\.PublishDir\)([^"]+)"') |
