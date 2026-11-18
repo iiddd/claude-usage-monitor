@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ClaudeUsageServer</AssemblyName>
     <RootNamespace>ClaudeUsageServer</RootNamespace>
-    <Version>1.1.1</Version>
+    <Version>1.1.2</Version>
     <!-- This project sits at the repo root: keep the test sources, the installer project, the
          widget, and build output out of its default globs (and out of the publish output). -->
     <DefaultItemExcludes>$(DefaultItemExcludes);tests/**;ClaudeUsageServer.Installer/**;widgets/**;docs/**;publish/**;dist/**</DefaultItemExcludes>

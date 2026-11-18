@@ -32,7 +32,7 @@
 
   <Package Name="Claude Usage Server"
            Manufacturer="Andrey Merkulov"
-           Version="1.1.1"
+           Version="1.1.2"
            UpgradeCode="B8C9D0E1-F2A3-4567-2345-67890ABCDEF0"
            Language="1033"
            Codepage="1252"
