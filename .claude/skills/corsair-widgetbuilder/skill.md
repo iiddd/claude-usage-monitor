@@ -307,6 +307,33 @@ When using an external API:
 - use HTTPS only
 - minimize data sent and cache responses where appropriate
 - make refresh rate configurable when polling is required
+- declare a `url` permission in `manifest.json` for every host the widget contacts (see 3.7)
+
+### 3.7 Manifest Permissions (iCUE 5.52+, Widget API 1.9)
+
+Source: https://docs.elgato.com/icue/widgets/references/permissions and `/icue/widgets/specification`.
+
+iCUE blocks any protected resource the manifest does not declare. Undeclared network requests fail with `net::ERR_ACCESS_DENIED` (`fetch` rejects with "Failed to fetch"), or iCUE shows a runtime Allow/Deny dialog. Declared permissions are shown to the user at import for approval. Users can revoke them at any time, so widgets must catch failures and show a fallback state.
+
+```json
+"permissions": [
+  { "type": "url", "domain": "api.example.com" },
+  { "type": "url", "domain": "localhost", "port": 8080 }
+]
+```
+
+- `url`: `domain` (hostname, IP without protocol, or `"any"` = all external non-localhost hosts) plus optional `port`. Declaring a domain also covers its subdomains. Covers http/https/ws/wss; `data:` and `blob:` are always blocked.
+- **`localhost` requires `port`.** Without it, import fails with "unsupported or corrupted widget" (iCUE log: `Port field is required for localhost domain`).
+- Other types: `file` / `folder` (`path` with macros such as `<Documents>`, `<AppData>`), `microphone`, `camera`, `speaker`, `screen`, `clipboard_read_write`, `local_fonts_access`, `self_signed_certificate` (`host`), `download`, `application` (`application`, e.g. `"Stream Deck"`).
+- The spec also lists `min_app_version` (e.g. `"5.52"`) as a required manifest field next to `min_framework_version`.
+- Use `icuewidget-cli` ≥ 0.5: it validates permissions and flags undeclared literal `fetch`/`WebSocket` hosts. 0.2.x does not.
+
+**`index.html` head rules (enforced by CLI 0.5; violations make iCUE reject the import with "Missing Title Element"):**
+
+- iCUE parses `<head>` as XML, so void elements must self-close: `<meta ... />`, `<link ... />`.
+- `<head>` must be ASCII only, including comments (no box-drawing or em-dash characters).
+- iCUE finds the head by text search, so the literal strings `<head` and `</head` must not appear later in the file (in a `<header>`, inline scripts, or comments). Split them (`'<' + 'head>'`) or build them in external JS.
+- Debugging: iCUE's log (`%LOCALAPPDATA%\Corsair\Logs\CUE5\*.log`, logger `cue.mod.widgets.widget_parser`) states the reason an import is rejected. For the widget's JS console, set the env var `QTWEBENGINE_REMOTE_DEBUGGING=9222`, restart iCUE, and open `http://localhost:9222`. Remove the variable afterwards.
 
 If no suitable free API exists, ask the user to provide their own API key via a `textfield` property.
 
