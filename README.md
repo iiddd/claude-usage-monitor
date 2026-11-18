@@ -20,7 +20,7 @@ Two components ship together: a small Windows Service that manages authenticatio
 - Windows 10 / 11
 - Corsair XENEON EDGE with **iCUE 5**
 - Claude Code installed and signed in (`claude login`)
-- .NET 8 Runtime (if not using the self-contained build)
+- ASP.NET Core Runtime 10 (x64) (if not using the self-contained build)
 
 ## Install
 

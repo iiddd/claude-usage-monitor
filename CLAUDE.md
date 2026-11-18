@@ -10,7 +10,7 @@ Target platform: Windows 11, Corsair XENEON EDGE S horizontal slot (840×344 px)
 
 ### ClaudeUsageServer (`ClaudeUsageServer.csproj`)
 
-An ASP.NET Core Minimal API running as a Windows Service (`net8.0-windows`, `Microsoft.NET.Sdk.Web`). It has three responsibilities:
+An ASP.NET Core Minimal API running as a Windows Service (`net10.0-windows`, `Microsoft.NET.Sdk.Web`). It has three responsibilities:
 
 1. **Credential management** — reads `~/.claude/.credentials.json` on startup, watches the file for external changes via `FileSystemWatcher`, and schedules a proactive token refresh 5 minutes before the token expires via a direct OAuth `refresh_token` grant (same mechanism the Claude CLI uses; consumes no usage). The rotated tokens are written back to the credentials file atomically (temp-file + rename), preserving unmanaged fields; the self-triggered FSW event is de-duplicated. The access and refresh tokens are stored only in memory inside a `sealed` `CredentialStore` class; neither is ever logged or returned in any HTTP response — the access token is injected into outgoing requests via `TryApplyToken(HttpRequestMessage)`, and the refresh token only leaves the store already sealed inside the grant body built by `TryCreateRefreshContent`. If the refresh token itself is expired/revoked the service enters the `reauth_required` state until the user runs `claude login`.
 
@@ -62,7 +62,7 @@ An iCUE HTML widget targeting `dashboard_lcd` (Xeneon Edge). The widget is respo
       ▼
 ┌──────────────────────────────────────────┐
 │  ClaudeUsageServer  (Windows Service)    │
-│  127.0.0.1:41920  ·  net8.0-windows             │
+│  127.0.0.1:41920  ·  net10.0-windows            │
 │                                          │
 │  CredentialWatcherService                │
 │  • loads token into CredentialStore      │
@@ -101,7 +101,7 @@ The service is the only component that handles credentials. The widget is creden
 
 ## Key Conventions
 
-**Target framework:** `net8.0-windows` (`Microsoft.NET.Sdk.Web`). NuGet packages: `Microsoft.Extensions.Hosting.WindowsServices`, `Serilog.AspNetCore`, `Serilog.Sinks.File`, `Serilog.Sinks.EventLog`.
+**Target framework:** `net10.0-windows` (`Microsoft.NET.Sdk.Web`). NuGet packages: `Microsoft.Extensions.Hosting.WindowsServices`, `Serilog.AspNetCore`, `Serilog.Sinks.File`, `Serilog.Sinks.EventLog`.
 
 **Coding style:**
 - Minimal API style — no controllers, no startup class. Top-level statements in `Program.cs`.
