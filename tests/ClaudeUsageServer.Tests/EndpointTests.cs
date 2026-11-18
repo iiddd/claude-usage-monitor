@@ -151,6 +151,120 @@ public class EndpointTests
         Assert.DoesNotContain("SENTINEL", body);
     }
 
+    // ── Rate limiting (HTTP 429) ───────────────────────────────────────────
+
+    [Fact]
+    public async Task Rate_limit_pauses_upstream_calls_until_backoff_elapses()
+    {
+        var time = new ManualTimeProvider();
+        var calls = 0;
+        var upstream = new FakeHttpHandler(_ => Interlocked.Increment(ref calls) <= 2
+            ? FakeHttpHandler.Json(HttpStatusCode.TooManyRequests, "{}")
+            : FakeHttpHandler.Json(HttpStatusCode.OK, UsageJson));
+        using var app = CreateApp(SeedValidToken, upstream, time: time);
+        using var client = app.CreateClient();
+
+        using (var first = await client.GetAsync("/usage"))
+        {
+            Assert.Equal(HttpStatusCode.TooManyRequests, first.StatusCode);
+            Assert.Equal("upstream_error", await ReadErrorAsync(first));
+            Assert.Equal(TimeSpan.FromSeconds(60), first.Headers.RetryAfter?.Delta);
+        }
+
+        // Inside the backoff window: answered locally, Anthropic is not called again.
+        time.Advance(TimeSpan.FromSeconds(30));
+        using (var during = await client.GetAsync("/usage"))
+        {
+            Assert.Equal(HttpStatusCode.TooManyRequests, during.StatusCode);
+            Assert.Equal(TimeSpan.FromSeconds(30), during.Headers.RetryAfter?.Delta);
+        }
+        Assert.Single(upstream.Requests);
+
+        // Second 429 doubles the backoff to two minutes.
+        time.Advance(TimeSpan.FromSeconds(30));
+        using (var second = await client.GetAsync("/usage"))
+            Assert.Equal(TimeSpan.FromMinutes(2), second.Headers.RetryAfter?.Delta);
+        Assert.Equal(2, upstream.Requests.Count);
+
+        // After the backoff, a successful call clears it.
+        time.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(UsageJson, await client.GetStringAsync("/usage"));
+        using var status = JsonDocument.Parse(await client.GetStringAsync("/status"));
+        Assert.Equal("ok", status.RootElement.GetProperty("state").GetString());
+        Assert.Equal(JsonValueKind.Null, status.RootElement.GetProperty("upstreamRetryAt").ValueKind);
+    }
+
+    [Fact]
+    public async Task Rate_limit_serves_stale_cache_and_reports_retry_time()
+    {
+        var time = new ManualTimeProvider();
+        var calls = 0;
+        var upstream = new FakeHttpHandler(_ => Interlocked.Increment(ref calls) == 1
+            ? FakeHttpHandler.Json(HttpStatusCode.OK, UsageJson)
+            : FakeHttpHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+        using var app = CreateApp(SeedValidToken, upstream, cacheTtlSeconds: 0, time: time);
+        using var client = app.CreateClient();
+
+        await client.GetStringAsync("/usage");
+        await Task.Delay(20);
+
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            using var response = await client.GetAsync("/usage");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(UsageJson, await response.Content.ReadAsStringAsync());
+            Assert.Equal("true", response.Headers.GetValues("X-Cache-Stale").Single());
+            Assert.NotNull(response.Headers.RetryAfter);
+        }
+        Assert.Equal(2, upstream.Requests.Count); // one success, one 429, then paused
+
+        using var status = JsonDocument.Parse(await client.GetStringAsync("/status"));
+        Assert.Equal("upstream_error", status.RootElement.GetProperty("state").GetString());
+        Assert.Equal(429, status.RootElement.GetProperty("upstreamStatus").GetInt32());
+        Assert.Equal(
+            time.GetUtcNow().AddMinutes(1).ToString("O"),
+            status.RootElement.GetProperty("upstreamRetryAt").GetString());
+    }
+
+    [Fact]
+    public async Task Server_retry_after_header_sets_the_backoff()
+    {
+        var upstream = new FakeHttpHandler(_ =>
+        {
+            var response = FakeHttpHandler.Json(HttpStatusCode.TooManyRequests, "{}");
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(300));
+            return response;
+        });
+        using var app = CreateApp(SeedValidToken, upstream, time: new ManualTimeProvider());
+        using var client = app.CreateClient();
+
+        using var response = await client.GetAsync("/usage");
+
+        Assert.Equal(TimeSpan.FromSeconds(300), response.Headers.RetryAfter?.Delta);
+    }
+
+    [Fact]
+    public async Task Concurrent_cache_misses_share_one_upstream_call()
+    {
+        var release = new TaskCompletionSource();
+        var upstream = FakeHttpHandler.Async(async _ =>
+        {
+            await release.Task;
+            return FakeHttpHandler.Json(HttpStatusCode.OK, UsageJson);
+        });
+        using var app = CreateApp(SeedValidToken, upstream);
+        using var client = app.CreateClient();
+
+        var first = client.GetStringAsync("/usage");
+        var second = client.GetStringAsync("/usage");
+        await Wait.UntilAsync(() => upstream.Requests.Count == 1, "the first request reaches upstream");
+        await Task.Delay(100); // give the second request time to (wrongly) call upstream too
+        release.SetResult();
+
+        Assert.Equal(new[] { UsageJson, UsageJson }, await Task.WhenAll(first, second));
+        Assert.Single(upstream.Requests);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static void SeedValidToken(CredentialStore store) =>
@@ -166,7 +280,8 @@ public class EndpointTests
     }
 
     private static WebApplicationFactory<Program> CreateApp(
-        Action<CredentialStore> seed, FakeHttpHandler upstream, int cacheTtlSeconds = 60)
+        Action<CredentialStore> seed, FakeHttpHandler upstream, int cacheTtlSeconds = 60,
+        TimeProvider? time = null)
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
@@ -188,6 +303,12 @@ public class EndpointTests
                 services.AddSingleton(store);
                 services.AddSingleton<IHttpClientFactory>(new FakeHttpClientFactory(upstream));
                 services.PostConfigure<ServerOptions>(o => o.CacheTtlSeconds = cacheTtlSeconds);
+
+                if (time is not null)
+                {
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton(time);
+                }
 
                 // Keep test runs out of the service's real log files.
                 services.RemoveAll<ILoggerFactory>();

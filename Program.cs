@@ -1,8 +1,10 @@
+using System.Globalization;
 using System.Net;
 using ClaudeUsageServer.Models;
 using ClaudeUsageServer.Services;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Serilog;
 using Serilog.Events;
@@ -68,6 +70,8 @@ try
     // ── Application services ───────────────────────────────────────────────
     builder.Services.AddSingleton<CredentialStore>();
     builder.Services.AddSingleton<UsageCache>();
+    builder.Services.TryAddSingleton(TimeProvider.System);
+    builder.Services.AddSingleton<UpstreamThrottle>();
     builder.Services.AddHostedService<CredentialWatcherService>();
     builder.Services.AddHostedService<LogCleanupService>();
     builder.Services.AddHttpClient();
@@ -115,8 +119,11 @@ try
 
     app.MapGet("/health", () => Results.Text("ok"));
 
-    app.MapGet("/status", (CredentialStore store) =>
-        Results.Json(store.GetStatus()));
+    app.MapGet("/status", (CredentialStore store, UpstreamThrottle throttle) =>
+        Results.Json(store.GetStatus() with
+        {
+            UpstreamRetryAt = throttle.BlockedUntil?.ToString("O"),
+        }));
 
     // OPTIONS preflight for the iCUE widget's browser context.
     app.MapMethods("/usage", ["OPTIONS"], (HttpContext ctx) =>
@@ -129,6 +136,7 @@ try
         HttpContext ctx,
         CredentialStore store,
         UsageCache cache,
+        UpstreamThrottle throttle,
         IOptionsMonitor<ServerOptions> options,
         IHttpClientFactory factory,
         ILogger<Program> logger) =>
@@ -152,61 +160,95 @@ try
             return Results.Json(new { error = usageError }, statusCode: 503);
         }
 
-        using var upstream = new HttpRequestMessage(
-            HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
+        // Rate-limited by Anthropic: make no upstream call until the backoff elapses.
+        if (throttle.RetryIn is { } retryIn)
+            return RateLimited(ctx, cache, logger, retryIn);
 
-        if (!store.TryApplyToken(upstream))
-        {
-            LogCacheDecision(logger, "miss:refresh_failed");
-            return Results.Json(new { error = "refresh_failed" }, statusCode: 503);
-        }
-
-        upstream.Headers.TryAddWithoutValidation("anthropic-beta", "oauth-2025-04-20");
-
-        LogCacheDecision(logger, "miss:upstream");
-        logger.LogInformation("Forwarding request to Anthropic usage endpoint");
-
-        var http = factory.CreateClient();
-
+        // Single flight: one upstream call at a time. A request that waited re-checks the cache
+        // and the backoff, so concurrent pollers share the result of the call they waited on.
+        await throttle.Gate.WaitAsync(ctx.RequestAborted);
         try
         {
-            using var response = await http.SendAsync(upstream);
-            var body = await response.Content.ReadAsStringAsync();
-
-            if (response.IsSuccessStatusCode)
+            if (cache.TryGetFresh(ttl, out fresh))
             {
-                store.MarkUpstreamHealthy();
-                cache.Store(body);
-                return Results.Content(body, "application/json");
+                LogCacheDecision(logger, "hit:coalesced");
+                return Results.Content(fresh, "application/json");
             }
 
-            // Non-200: token itself is fine, the usage endpoint is failing.
-            store.MarkUpstreamError((int)response.StatusCode);
-            logger.LogError("Anthropic returned HTTP {StatusCode}", (int)response.StatusCode);
+            if (throttle.RetryIn is { } waitedRetryIn)
+                return RateLimited(ctx, cache, logger, waitedRetryIn);
 
-            if (cache.TryGetStale(out var stale))
+            using var upstream = new HttpRequestMessage(
+                HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
+
+            if (!store.TryApplyToken(upstream))
             {
-                LogCacheDecision(logger, "stale:upstream_error");
-                ctx.Response.Headers["X-Cache-Stale"] = "true";
-                return Results.Content(stale, "application/json");
+                LogCacheDecision(logger, "miss:refresh_failed");
+                return Results.Json(new { error = "refresh_failed" }, statusCode: 503);
             }
 
-            return Results.Json(new { error = "upstream_error" }, statusCode: (int)response.StatusCode);
+            upstream.Headers.TryAddWithoutValidation("anthropic-beta", "oauth-2025-04-20");
+
+            LogCacheDecision(logger, "miss:upstream");
+            logger.LogInformation("Forwarding request to Anthropic usage endpoint");
+
+            var http = factory.CreateClient();
+
+            try
+            {
+                using var response = await http.SendAsync(upstream);
+                var body = await response.Content.ReadAsStringAsync();
+
+                if (response.IsSuccessStatusCode)
+                {
+                    throttle.RecordSuccess();
+                    store.MarkUpstreamHealthy();
+                    cache.Store(body);
+                    return Results.Content(body, "application/json");
+                }
+
+                // Non-200: token itself is fine, the usage endpoint is failing.
+                store.MarkUpstreamError((int)response.StatusCode);
+
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    var backoff = throttle.RecordRateLimited(GetRetryAfter(response));
+                    logger.LogWarning(
+                        "Anthropic rate limit (HTTP 429): pausing usage requests for {Seconds:F0}s",
+                        backoff.TotalSeconds);
+                    return RateLimited(ctx, cache, logger, backoff);
+                }
+
+                logger.LogError("Anthropic returned HTTP {StatusCode}", (int)response.StatusCode);
+
+                if (cache.TryGetStale(out var stale))
+                {
+                    LogCacheDecision(logger, "stale:upstream_error");
+                    ctx.Response.Headers["X-Cache-Stale"] = "true";
+                    return Results.Content(stale, "application/json");
+                }
+
+                return Results.Json(new { error = "upstream_error" }, statusCode: (int)response.StatusCode);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Network-level failure reaching Anthropic — no HTTP status to record.
+                store.MarkUpstreamError(null);
+                logger.LogError("Network error reaching Anthropic: {Reason}", ex.Message);
+
+                if (cache.TryGetStale(out var stale))
+                {
+                    LogCacheDecision(logger, "stale:upstream_error");
+                    ctx.Response.Headers["X-Cache-Stale"] = "true";
+                    return Results.Content(stale, "application/json");
+                }
+
+                return Results.Json(new { error = "upstream_error" }, statusCode: 503);
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            // Network-level failure reaching Anthropic — no HTTP status to record.
-            store.MarkUpstreamError(null);
-            logger.LogError("Network error reaching Anthropic: {Reason}", ex.Message);
-
-            if (cache.TryGetStale(out var stale))
-            {
-                LogCacheDecision(logger, "stale:upstream_error");
-                ctx.Response.Headers["X-Cache-Stale"] = "true";
-                return Results.Content(stale, "application/json");
-            }
-
-            return Results.Json(new { error = "upstream_error" }, statusCode: 503);
+            throttle.Gate.Release();
         }
     });
 
@@ -229,6 +271,35 @@ static void SetCorsHeaders(HttpResponse response)
     response.Headers["Access-Control-Allow-Origin"] = "*";
     response.Headers["Access-Control-Allow-Methods"] = "GET, OPTIONS";
     response.Headers["Access-Control-Allow-Headers"] = "*";
+}
+
+// Answers a request while Anthropic is rate-limiting us: the stale cache when there is one,
+// otherwise the upstream_error the widget already understands. Retry-After tells the caller
+// when an upstream call will next be made.
+static IResult RateLimited(
+    HttpContext ctx, UsageCache cache, Microsoft.Extensions.Logging.ILogger logger, TimeSpan retryIn)
+{
+    var seconds = Math.Max(1, (int)Math.Ceiling(retryIn.TotalSeconds));
+    ctx.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
+
+    if (cache.TryGetStale(out var stale))
+    {
+        LogCacheDecision(logger, "stale:rate_limited");
+        ctx.Response.Headers["X-Cache-Stale"] = "true";
+        return Results.Content(stale, "application/json");
+    }
+
+    LogCacheDecision(logger, "miss:rate_limited");
+    return Results.Json(new { error = "upstream_error" }, statusCode: StatusCodes.Status429TooManyRequests);
+}
+
+// The server's Retry-After hint as a delay (it may be sent as seconds or as a date).
+static TimeSpan? GetRetryAfter(HttpResponseMessage response)
+{
+    var header = response.Headers.RetryAfter;
+    if (header?.Delta is { } delta) return delta;
+    if (header?.Date is { } date) return date - DateTimeOffset.UtcNow;
+    return null;
 }
 
 // Per-request cache hit/miss/stale decision. Debug-only, so it is silent unless

@@ -14,7 +14,7 @@ An ASP.NET Core Minimal API running as a Windows Service (`net10.0-windows`, `Mi
 
 1. **Credential management** — reads `~/.claude/.credentials.json` on startup, watches the file for external changes via `FileSystemWatcher`, and schedules a proactive token refresh 5 minutes before the token expires via a direct OAuth `refresh_token` grant (same mechanism the Claude CLI uses; consumes no usage). The rotated tokens are written back to the credentials file atomically (temp-file + rename), preserving unmanaged fields; the self-triggered FSW event is de-duplicated. The access and refresh tokens are stored only in memory inside a `sealed` `CredentialStore` class; neither is ever logged or returned in any HTTP response — the access token is injected into outgoing requests via `TryApplyToken(HttpRequestMessage)`, and the refresh token only leaves the store already sealed inside the grant body built by `TryCreateRefreshContent`. If the refresh token itself is expired/revoked the service enters the `reauth_required` state until the user runs `claude login`.
 
-2. **Response caching** — `UsageCache` holds the last successful Anthropic response body in memory. `GET /usage` returns the cached body immediately if it is younger than `CacheTtlSeconds` (default 60 s). On Anthropic error or network failure the stale cache is returned with an `X-Cache-Stale: true` header. The cache is never written to disk; it is thread-safe via a simple `lock`.
+2. **Response caching** — `UsageCache` holds the last successful Anthropic response body in memory. `GET /usage` returns the cached body immediately if it is younger than `CacheTtlSeconds` (default 60 s). On Anthropic error or network failure the stale cache is returned with an `X-Cache-Stale: true` header. The cache is never written to disk; it is thread-safe via a simple `lock`. `UpstreamThrottle` guards the upstream call: a single-flight `SemaphoreSlim` so concurrent cache misses share one call, and after an HTTP 429 a backoff (server `Retry-After`, else 1/2/4/8/15 min) during which `/usage` serves the stale cache or a 429 `upstream_error` without calling Anthropic. The backoff end is exposed as `upstreamRetryAt` in `/status`. It uses an injected `TimeProvider` so tests can move time.
 
 3. **HTTP proxy** — listens on `http://127.0.0.1:41920` (loopback only, asserted at startup). On cache miss, `GET /usage` forwards requests to `https://api.anthropic.com/api/oauth/usage` with the bearer token and the required `anthropic-beta` header added server-side. The widget sends **no credentials**. CORS headers are added manually per-endpoint so error responses also carry them.
 
@@ -24,6 +24,7 @@ An ASP.NET Core Minimal API running as a Windows Service (`net10.0-windows`, `Mi
 - `Program.cs` — host setup, Kestrel config, endpoint definitions
 - `Services/CredentialStore.cs` — thread-safe (`ReaderWriterLockSlim`) token store
 - `Services/UsageCache.cs` — in-memory response cache with TTL and stale fallback
+- `Services/UpstreamThrottle.cs` — single-flight gate and HTTP 429 backoff for the upstream usage call
 - `Services/CredentialWatcherService.cs` — `BackgroundService`; FSW, refresh loop, retry
 - `Models/ServerOptions.cs` — configuration binding
 - `Models/CredentialModels.cs` — JSON deserialization models and `StatusResponse`

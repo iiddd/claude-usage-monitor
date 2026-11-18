@@ -206,7 +206,8 @@ Every value is also overridable via environment variable using the prefix `Claud
   "lastRefreshError": null,
   "consecutiveFailures": 0,
   "nextRetryAt": null,
-  "upstreamStatus": null
+  "upstreamStatus": null,
+  "upstreamRetryAt": null
 }
 ```
 
@@ -219,7 +220,7 @@ Every value is also overridable via environment variable using the prefix `Claud
 | `credentials_missing` | Credentials file absent or unreadable |
 | `upstream_error` | Token is fine but the Anthropic usage endpoint is failing; `upstreamStatus` carries the last HTTP status |
 
-`lastRefreshAttempt`, `lastRefreshError` (null when none) and `consecutiveFailures` are always present. `nextRetryAt` is populated only in `refresh_failed`; `upstreamStatus` only in `upstream_error`. **No token material ever appears in `/status`.**
+`lastRefreshAttempt`, `lastRefreshError` (null when none) and `consecutiveFailures` are always present. `nextRetryAt` is populated only in `refresh_failed`; `upstreamStatus` only in `upstream_error`. `upstreamRetryAt` is set while usage requests are paused after an Anthropic HTTP 429 (see [Rate limiting](#rate-limiting)). **No token material ever appears in `/status`.**
 | `OPTIONS` | `/usage` | CORS preflight — returns 200 with CORS headers. |
 
 All endpoints are reachable only from `127.0.0.1`.
@@ -233,6 +234,12 @@ All endpoints are reachable only from `127.0.0.1`.
 3. **Anthropic error with stale cache** — stale body returned with `X-Cache-Stale: true` header.
 4. **Anthropic error with no cache** — error returned as-is.
 
+Only one request calls Anthropic at a time. Requests that arrive while a call is in flight (for example two widget instances polling together) wait for it and reuse its result.
+
+### Rate limiting
+
+When Anthropic answers HTTP 429, the service stops calling the usage endpoint for a while: for the `Retry-After` the server sends (capped at 1 hour), or otherwise 1, 2, 4, 8, then 15 minutes for consecutive 429s. During the pause `/usage` makes no upstream call and returns the stale cache (or `upstream_error` with status 429 when there is none), with a `Retry-After` header saying when the next call will be made. `/status` shows the time in `upstreamRetryAt`. The first successful call clears the backoff.
+
 ### Error responses
 
 The `error` field uses the same vocabulary as the `/status` state names, so the widget branches on one set of tokens.
@@ -243,6 +250,8 @@ The `error` field uses the same vocabulary as the `/status` state names, so the 
 | Refresh token expired/revoked — login needed | 503 | `{"error":"reauth_required"}` |
 | Token expired / refresh failing | 503 | `{"error":"refresh_failed"}` |
 | Anthropic non-200, no cache | same as upstream | `{"error":"upstream_error"}` |
+| Rate-limited (HTTP 429), no cache | 429 + `Retry-After` | `{"error":"upstream_error"}` |
+| Rate-limited (HTTP 429), stale cache | 200 + `X-Cache-Stale: true` + `Retry-After` | last cached body |
 | Anthropic error, stale cache | 200 + `X-Cache-Stale: true` | last cached body |
 | Network failure, stale cache | 200 + `X-Cache-Stale: true` | last cached body |
 | Network failure, no cache | 503 | `{"error":"upstream_error"}` |
