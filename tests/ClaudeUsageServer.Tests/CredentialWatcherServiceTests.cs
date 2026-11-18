@@ -65,7 +65,7 @@ public sealed class CredentialWatcherServiceTests : IDisposable
         await Wait.UntilAsync(() => run.Store.GetStatus().State == "reauth_required", "the grant is rejected");
         await Task.Delay(300);
 
-        Assert.Single(handler.Requests); // no fallback host, no retry loop
+        Assert.Single(handler.Requests);
         Assert.Equal("invalid_grant", run.Store.GetStatus().LastRefreshError);
     }
 
@@ -122,8 +122,7 @@ public sealed class CredentialWatcherServiceTests : IDisposable
         await using var run = await StartServiceAsync(handler);
         await Wait.UntilAsync(() => run.Store.GetStatus().State == "reauth_required", "the grant is rejected");
 
-        // Simulates `claude login` replacing the credentials file.
-        WriteCredentials(NewAccess, NewRefresh, DateTimeOffset.UtcNow.AddHours(8));
+        SimulateClaudeLogin();
 
         await Wait.UntilAsync(() => run.Store.GetStatus().State == "ok", "the file watcher reloads");
         Assert.Single(handler.Requests);
@@ -134,9 +133,9 @@ public sealed class CredentialWatcherServiceTests : IDisposable
     {
         WriteCredentials(OldAccess, OldRefresh, DateTimeOffset.UtcNow.AddMinutes(-5));
         var calls = 0;
+        var errorBodyEchoingToken = $$"""{"echo":"{{OldRefresh}}"}""";
         var handler = new FakeHttpHandler(_ => Interlocked.Increment(ref calls) == 1
-            // The error body echoes a token, as a misbehaving server might.
-            ? FakeHttpHandler.Json(HttpStatusCode.ServiceUnavailable, $$"""{"echo":"{{OldRefresh}}"}""")
+            ? FakeHttpHandler.Json(HttpStatusCode.ServiceUnavailable, errorBodyEchoingToken)
             : FakeHttpHandler.Json(HttpStatusCode.OK,
                 $$"""{"access_token":"{{NewAccess}}","refresh_token":"{{NewRefresh}}","expires_in":3600}"""));
 
@@ -147,7 +146,8 @@ public sealed class CredentialWatcherServiceTests : IDisposable
         Assert.All(run.Logger.Messages, m => Assert.DoesNotContain("SENTINEL", m));
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────
+    private void SimulateClaudeLogin() =>
+        WriteCredentials(NewAccess, NewRefresh, DateTimeOffset.UtcNow.AddHours(8));
 
     private void WriteCredentials(string access, string refresh, DateTimeOffset expiresAt)
     {
@@ -165,13 +165,15 @@ public sealed class CredentialWatcherServiceTests : IDisposable
         File.WriteAllText(CredentialsPath, json.ToJsonString());
     }
 
+    private const int RetryIntervalLongerThanAnyTest = 3600;
+
     private async Task<ServiceRun> StartServiceAsync(FakeHttpHandler handler, bool diagnosticLogging = false)
     {
         var options = new ServerOptions
         {
             CredentialsPath = CredentialsPath,
             RefreshBufferMinutes = 5,
-            RetryIntervalSeconds = 3600, // keep retries out of the test window
+            RetryIntervalSeconds = RetryIntervalLongerThanAnyTest,
             DiagnosticLogging = diagnosticLogging,
         };
         var store = new CredentialStore();

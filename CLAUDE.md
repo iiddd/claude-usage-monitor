@@ -25,6 +25,8 @@ An ASP.NET Core Minimal API running as a Windows Service (`net10.0-windows`, `Mi
 - `Services/CredentialStore.cs` — thread-safe (`ReaderWriterLockSlim`) token store
 - `Services/UsageCache.cs` — in-memory response cache with TTL and stale fallback
 - `Services/UpstreamThrottle.cs` — single-flight gate and HTTP 429 backoff for the upstream usage call
+- `Services/UsageProxy.cs` — the `GET /usage` handler: cache, single flight, upstream call, stale fallback
+- `Services/HostSetup.cs` — bootstrap logger, Serilog configuration, loopback-only startup assertion
 - `Services/CredentialWatcherService.cs` — `BackgroundService`; FSW, refresh loop, retry
 - `Models/ServerOptions.cs` — configuration binding
 - `Models/CredentialModels.cs` — JSON deserialization models and `StatusResponse`
@@ -120,6 +122,7 @@ The service is the only component that handles credentials. The widget is creden
 - PascalCase for types and properties; camelCase for locals. Async/await throughout.
 - DI: `CredentialStore` registered as singleton; `CredentialWatcherService` as hosted service; `IHttpClientFactory` via `AddHttpClient()`. No manual constructor injection in endpoints — Minimal API parameter injection is used.
 - Service classes live in `Services/`; configuration and data models in `Models/`.
+- **No inline comments** in code (C#, JS, CSS, HTML, PowerShell). Only documentation comments are allowed: `///` XML docs in C#, `/** */` JSDoc in JS, comment-based help in PowerShell. When something needs explaining, extract a well-named method, constant or variable, or put it in the member's doc comment. Config files (YAML, `.wxs`, `.csproj`, `.gitignore`) may keep comments; the `# vX.Y.Z` comments after pinned action SHAs are required (Dependabot updates them).
 
 **Configuration:** `appsettings.json` with a `ClaudeUsageServer` section — `Port`, `CredentialsPath`, `RefreshBufferMinutes`, `RetryIntervalSeconds`, `CacheTtlSeconds`. All values are overridable via environment variables using the `ClaudeUsageServer__<Key>` prefix. `CredentialsPath` is never logged.
 
@@ -260,7 +263,7 @@ Reinstalling replaces the existing widget; configured properties (port, interval
 icuewidget validate widgets/ClaudeUsageWidget
 ```
 
-Fix any reported errors before packaging. The `icuewidget` CLI must be installed — check with `icuewidget --version`. Use `icuewidget-cli` ≥ 0.5 (`npm install -g icuewidget-cli`): it validates `manifest.permissions` and errors on `fetch()` calls to hosts no `url` permission covers. Older versions (0.2.x) pass a manifest that iCUE then rejects or blocks. 0.5 also enforces the `index.html` head rules iCUE needs: self-closed `<meta ... />` / `<link ... />`, ASCII-only head, and no literal head tag later in the file (the preview-mode template string in `index.html` splits it as `'<' + 'head>'`).
+Fix any reported errors before packaging. The `icuewidget` CLI must be installed — check with `icuewidget --version`. Use `icuewidget-cli` ≥ 0.5 (`npm install -g icuewidget-cli`): it validates `manifest.permissions` and errors on `fetch()` calls to hosts no `url` permission covers. Older versions (0.2.x) pass a manifest that iCUE then rejects or blocks. 0.5 also enforces the `index.html` head rules iCUE needs: self-closed `<meta ... />` / `<link ... />`, ASCII-only head, and no literal head tag later in the file (the preview-mode template string in `index.html` builds it with `headTag()`).
 
 ---
 

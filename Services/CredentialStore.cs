@@ -35,17 +35,15 @@ internal sealed class CredentialStore : IDisposable
     private bool _reauthRequired;
     private bool _refreshing;
 
-    // Upstream (Anthropic usage endpoint) health — recorded by the /usage endpoint.
+    /// <summary>Health of the Anthropic usage endpoint, as recorded by <c>GET /usage</c>.</summary>
     private bool _upstreamHealthy = true;
     private int? _upstreamStatus;
 
-    // Last computed state — used to fire the transition listener only on an actual change.
+    /// <summary>Last computed state, so the transition listener fires only on an actual change.</summary>
     private string _lastState = "startup";
     private Action<string, string, string>? _onTransition;
 
     private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
-
-    // ── Transition notification ────────────────────────────────────────────
 
     /// <summary>
     /// Registers a callback fired (old, new, reason) whenever a mutation changes the computed
@@ -72,7 +70,11 @@ internal sealed class CredentialStore : IDisposable
             _onTransition?.Invoke(oldState, newState, reason);
     }
 
-    // Assumes the caller holds a lock. Mirrors the precedence documented on the class.
+    /// <summary>
+    /// Computes the state with the precedence documented on the class. A token that is present
+    /// but expired, with no failure recorded yet, counts as <c>refresh_failed</c>.
+    /// The caller must hold the lock.
+    /// </summary>
     private string ComputeStateUnsafe()
     {
         bool tokenValid = _accessToken is not null
@@ -85,10 +87,8 @@ internal sealed class CredentialStore : IDisposable
         if (_consecutiveFailures > 0)               return "refresh_failed";
         if (!_upstreamHealthy)                      return "upstream_error";
         if (tokenValid)                             return "ok";
-        return "refresh_failed"; // token present but expired and no explicit failure recorded yet
+        return "refresh_failed";
     }
-
-    // ── Read accessors (no token material) ─────────────────────────────────
 
     public bool HasValidToken
     {
@@ -149,8 +149,6 @@ internal sealed class CredentialStore : IDisposable
         finally { _lock.ExitReadLock(); }
     }
 
-    // ── Token injection (never returns a token as a string) ────────────────
-
     /// <summary>
     /// Injects the bearer token directly into <paramref name="request"/> without
     /// returning it as a string. Returns false if no valid token is available.
@@ -196,8 +194,6 @@ internal sealed class CredentialStore : IDisposable
         }
         finally { _lock.ExitReadLock(); }
     }
-
-    // ── Mutations ──────────────────────────────────────────────────────────
 
     /// <summary>
     /// Loads tokens read from the credentials file (or a successful refresh grant). Clears
@@ -302,8 +298,6 @@ internal sealed class CredentialStore : IDisposable
         }
         finally { _lock.ExitReadLock(); }
     }
-
-    // ── Status snapshot ────────────────────────────────────────────────────
 
     public StatusResponse GetStatus()
     {
