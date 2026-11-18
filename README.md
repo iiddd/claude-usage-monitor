@@ -49,8 +49,9 @@ gh attestation verify ClaudeUsageServer.msi --repo iiddd/claude-usage-monitor
 gh attestation verify claudeusage.icuewidget --repo iiddd/claude-usage-monitor
 ```
 
-The MSI is not code-signed yet, so Windows SmartScreen may warn on first run.
 3. Assign the widget to a XENEON EDGE S slot.
+
+The MSI is not code-signed yet, so Windows SmartScreen may warn on first run. See the [Code signing policy](CODE_SIGNING_POLICY.md).
 
 That's it. The widget starts showing live usage as soon as the service is running.
 
@@ -411,6 +412,10 @@ Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the security model and how to report a vulnerability privately.
+
+## Code signing policy
+
+What is signed, who approves it, and what the software sends over the network: see the [Code signing policy](CODE_SIGNING_POLICY.md).
 
 ## License
 

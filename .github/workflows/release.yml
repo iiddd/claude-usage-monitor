@@ -94,5 +94,6 @@ jobs:
           Copy-Item $env:BUNDLE "dist/claude-usage-monitor-$env:TAG.intoto.jsonl"
           $extra = @()
           if ($env:TAG.Contains('-')) { $extra += '--prerelease' }
+          $notes = "Code signing policy: https://github.com/$env:GITHUB_REPOSITORY/blob/main/CODE_SIGNING_POLICY.md"
           gh release create $env:TAG (Get-ChildItem dist -File).FullName `
-            --draft --verify-tag --generate-notes --title $env:TAG @extra
+            --draft --verify-tag --generate-notes --notes $notes --title $env:TAG @extra
