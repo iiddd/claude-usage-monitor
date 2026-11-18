@@ -403,6 +403,10 @@ The service starts but `/status` returns `tokenValid: false`. Run `claude login`
 
 ---
 
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem, the test policy, and the code style.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the security model and how to report a vulnerability privately.
