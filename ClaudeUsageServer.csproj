@@ -7,7 +7,13 @@
     <AssemblyName>ClaudeUsageServer</AssemblyName>
     <RootNamespace>ClaudeUsageServer</RootNamespace>
     <Version>1.1.0</Version>
+    <!-- The test project lives under the repo root; keep its sources out of this project. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**</DefaultItemExcludes>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ClaudeUsageServer.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
