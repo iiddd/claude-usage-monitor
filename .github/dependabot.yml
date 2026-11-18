@@ -22,6 +22,13 @@ updates:
       - /ClaudeUsageServer.Installer
     schedule:
       interval: weekly
+    ignore:
+      # Microsoft.Extensions.* / Microsoft.AspNetCore.* ship in lockstep with the .NET runtime.
+      # The service targets .NET 10, so stay on 10.x; raise this bound when retargeting.
+      - dependency-name: "Microsoft.Extensions.*"
+        versions: [">= 11"]
+      - dependency-name: "Microsoft.AspNetCore.*"
+        versions: [">= 11"]
     groups:
       # Minor and patch bumps arrive as one PR; major versions get their own PRs.
       nuget-minor-patch:
