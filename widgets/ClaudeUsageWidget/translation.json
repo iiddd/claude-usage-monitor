@@ -1,7 +1,7 @@
 {
   "en": {
     "translation": {
-      "Claude Code Usage": "Claude Code Usage",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Refresh Interval",
       "Widget Personalization": "Widget Personalization",
       "Threshold Color Coding": "Threshold Color Coding",
@@ -18,7 +18,7 @@
   },
   "de": {
     "translation": {
-      "Claude Code Usage": "Claude Code Nutzung",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Aktualisierungsintervall",
       "Widget Personalization": "Widget-Personalisierung",
       "Threshold Color Coding": "Schwellenwert-Farbkodierung",
@@ -35,7 +35,7 @@
   },
   "es": {
     "translation": {
-      "Claude Code Usage": "Uso de Claude Code",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Intervalo de actualización",
       "Widget Personalization": "Personalización del widget",
       "Threshold Color Coding": "Codificación de color por umbral",
@@ -52,7 +52,7 @@
   },
   "fr": {
     "translation": {
-      "Claude Code Usage": "Utilisation de Claude Code",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Intervalle de rafraîchissement",
       "Widget Personalization": "Personnalisation du widget",
       "Threshold Color Coding": "Codage couleur par seuil",
@@ -69,7 +69,7 @@
   },
   "it": {
     "translation": {
-      "Claude Code Usage": "Utilizzo di Claude Code",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Intervallo di aggiornamento",
       "Widget Personalization": "Personalizzazione widget",
       "Threshold Color Coding": "Codifica colore per soglia",
@@ -86,7 +86,7 @@
   },
   "ja": {
     "translation": {
-      "Claude Code Usage": "Claude Code 使用状況",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "更新間隔",
       "Widget Personalization": "ウィジェットのパーソナライズ",
       "Threshold Color Coding": "しきい値カラーコーディング",
@@ -103,7 +103,7 @@
   },
   "ko": {
     "translation": {
-      "Claude Code Usage": "Claude Code 사용량",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "새로 고침 간격",
       "Widget Personalization": "위젯 개인 설정",
       "Threshold Color Coding": "임계값 색상 코딩",
@@ -120,7 +120,7 @@
   },
   "pt": {
     "translation": {
-      "Claude Code Usage": "Uso do Claude Code",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Intervalo de atualização",
       "Widget Personalization": "Personalização do widget",
       "Threshold Color Coding": "Codificação de cor por limite",
@@ -137,7 +137,7 @@
   },
   "ru": {
     "translation": {
-      "Claude Code Usage": "Использование Claude Code",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Интервал обновления",
       "Widget Personalization": "Персонализация виджета",
       "Threshold Color Coding": "Цветовое кодирование порогов",
@@ -154,7 +154,7 @@
   },
   "zh_CN": {
     "translation": {
-      "Claude Code Usage": "Claude Code 用量",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "刷新间隔",
       "Widget Personalization": "小部件个性化",
       "Threshold Color Coding": "阈值颜色编码",
@@ -171,7 +171,7 @@
   },
   "zh_TW": {
     "translation": {
-      "Claude Code Usage": "Claude Code 用量",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "更新間隔",
       "Widget Personalization": "小工具個人化",
       "Threshold Color Coding": "閾值色彩編碼",
@@ -188,7 +188,7 @@
   },
   "uk": {
     "translation": {
-      "Claude Code Usage": "Використання Claude Code",
+      "Claude Usage Monitor": "Claude Usage Monitor",
       "Refresh Interval": "Інтервал оновлення",
       "Widget Personalization": "Персоналізація віджета",
       "Threshold Color Coding": "Колірне кодування порогів",

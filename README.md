@@ -1,4 +1,4 @@
-# Claude Usage Widget for XENEON EDGE
+# Claude Usage Monitor
 
 [![CI](https://github.com/iiddd/claude-usage-monitor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iiddd/claude-usage-monitor/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/iiddd/claude-usage-monitor)](https://github.com/iiddd/claude-usage-monitor/releases/latest)
@@ -64,7 +64,7 @@ Each release also lists SHA-256 checksums in `SHA256SUMS.txt`.
 To upgrade, run the newer MSI; it replaces the old version and restarts the service. You don't need
 to re-import the widget unless the release notes say it changed.
 
-To uninstall, use **Settings → Apps → Claude Usage Server → Uninstall**, and remove the widget in
+To uninstall, use **Settings → Apps → Claude Usage Monitor → Uninstall**, and remove the widget in
 iCUE. Logs stay in `%ProgramData%\ClaudeUsageServer\logs\`; delete that folder to remove them too.
 
 ## Widget settings
@@ -93,7 +93,7 @@ curl http://127.0.0.1:41920/status
 
 | The widget shows | What to do |
 |------------------|------------|
-| **Service offline** | The widget can't reach the service. Check that **Claude Usage Server** is running in `services.msc`. If it won't start, install the [ASP.NET Core Runtime 10](https://dotnet.microsoft.com/download/dotnet/10.0) (x64). If the service is running, check that the widget's permission for `localhost:41920` is still allowed in iCUE. |
+| **Service offline** | The widget can't reach the service. Check that **Claude Usage Monitor** is running in `services.msc`. If it won't start, install the [ASP.NET Core Runtime 10](https://dotnet.microsoft.com/download/dotnet/10.0) (x64). If the service is running, check that the widget's permission for `localhost:41920` is still allowed in iCUE. |
 | **No credentials** | `/status` says `credentials_missing`. Install Claude Code and run `claude login`. The service picks up the new credentials on its own, without a restart. |
 | **Login required** | Your Claude Code sign-in has expired. Run `claude login` in a terminal; the widget recovers by itself. |
 | **Anthropic API error, HTTP 429** | Anthropic is rate-limiting the usage endpoint. The service waits (1, 2, 4, 8, then 15 minutes) before trying again, and recovers on its own. `upstreamRetryAt` in `/status` shows when it will try next. |
@@ -129,7 +129,7 @@ the widget. See [Changing the port](docs/reference.md#changing-the-port).
       │  read on startup, watched for changes
       ▼
 ┌──────────────────────────────────────────┐
-│  Claude Usage Server  (Windows service)  │
+│  Claude Usage Monitor (Windows service)  │
 │  127.0.0.1:41920 — your computer only    │
 │                                          │
 │  • Keeps your Claude Code token fresh    │
@@ -171,7 +171,7 @@ The service sends nothing anywhere except to Anthropic, and only to do what you 
 - **Anthropic's usage endpoint** (`https://api.anthropic.com/api/oauth/usage`), to read the Claude Code usage the widget displays. The request carries your own Claude Code OAuth access token, read from your local `~/.claude/.credentials.json`.
 - **Anthropic's OAuth token endpoints** (`https://platform.claude.com/v1/oauth/token`, falling back to `https://console.anthropic.com/v1/oauth/token`), to refresh that token before it expires, the same way the Claude Code CLI does.
 
-Anthropic's handling of that data is covered by [Anthropic's Privacy Policy](https://www.anthropic.com/legal/privacy). There is no telemetry, analytics, or update check, and nothing is sent to the maintainer. The service listens only on `127.0.0.1`; the iCUE widget talks only to that local service and never sees your credentials. To stop all network activity, stop or uninstall the **Claude Usage Server** Windows service.
+Anthropic's handling of that data is covered by [Anthropic's Privacy Policy](https://www.anthropic.com/legal/privacy). There is no telemetry, analytics, or update check, and nothing is sent to the maintainer. The service listens only on `127.0.0.1`; the iCUE widget talks only to that local service and never sees your credentials. To stop all network activity, stop or uninstall the **Claude Usage Monitor** Windows service.
 
 ## Development
 

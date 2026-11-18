@@ -1,5 +1,5 @@
 /**
- * @fileoverview Shared rendering module for the Claude Code Usage widget, used by both
+ * @fileoverview Shared rendering module for the Claude Usage Monitor widget, used by both
  * index.html (iCUE widget) and the preview iframes. Polling, lifecycle and config are owned by
  * each host; this module only reads and writes the DOM and formats values.
  */

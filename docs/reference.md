@@ -1,6 +1,6 @@
 # Reference
 
-Technical details of the Claude Usage Server for developers and anyone who wants to know exactly
+Technical details of Claude Usage Monitor for developers and anyone who wants to know exactly
 what it does. For installing and using the widget, see the [README](../README.md).
 
 - [Configuration](#configuration)
@@ -249,7 +249,7 @@ dotnet publish ClaudeUsageServer.csproj -c Release -r win-x64 --self-contained f
 ```powershell
 sc.exe create ClaudeUsageServer `
     binPath= "C:\path\to\publish\ClaudeUsageServer.exe" `
-    DisplayName= "Claude Usage Server" `
+    DisplayName= "Claude Usage Monitor" `
     start= auto
 sc.exe description ClaudeUsageServer "Proxies Claude Code OAuth usage data to the iCUE widget."
 sc.exe start ClaudeUsageServer
@@ -292,7 +292,7 @@ curl http://127.0.0.1:41920/status   # → {"state":"ok",...}
 
 ### Uninstall
 
-**Settings → Apps → Claude Usage Server → Uninstall.** This stops and removes the service, deletes
+**Settings → Apps → Claude Usage Monitor → Uninstall.** This stops and removes the service, deletes
 `%ProgramFiles%\ClaudeUsageServer\`, and removes the Event Log source.
 
 The logs in `%ProgramData%\ClaudeUsageServer\logs\` are kept. To remove them too:
